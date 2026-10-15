@@ -236,7 +236,38 @@ labor_rate_curr = (payroll_curr / total_sales_curr) * 100 if total_sales_curr el
 labor_rate_prev = (payroll_prev / total_sales_prev) * 100 if total_sales_prev else 0
 
 # -------------------------------------------------------------
-# 6. Render Tabs
+# 6. Bonus Calculations Engine
+# -------------------------------------------------------------
+def get_sales_bonus(growth):
+    if growth >= 25.0:
+        return 2500
+    elif growth >= 20.0:
+        return 2000
+    elif growth >= 15.0:
+        return 1500
+    elif growth >= 8.0:
+        return 1000
+    elif growth >= 6.0:
+        return 750
+    elif growth >= 4.0:
+        return 500
+    return 0
+
+def get_labor_bonus(rate):
+    if rate <= 8.00:
+        return 1000
+    elif rate <= 9.00:
+        return 750
+    elif rate <= 11.00:
+        return 500
+    return 0
+
+sales_bonus = get_sales_bonus(pct_inside_change)
+labor_bonus = get_labor_bonus(labor_rate_curr)
+total_bonus = sales_bonus + labor_bonus
+
+# -------------------------------------------------------------
+# 7. Render Tabs
 # -------------------------------------------------------------
 tab1, tab2, tab3 = st.tabs([
     "📊 Executive Dashboard", 
@@ -258,6 +289,7 @@ with tab1:
 
     st.divider()
 
+    # 8 KPI Cards
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("TOTAL GROSS SALES", f"${total_sales_curr:,.2f}", f"{((total_sales_curr - total_sales_prev)/total_sales_prev)*100:+.2f}% YoY" if total_sales_prev else "-")
     k2.metric("CORE ADJUSTED INSIDE", f"${adjusted_inside_curr:,.2f}", f"{pct_inside_change:+.2f}% Core")
@@ -270,6 +302,17 @@ with tab1:
     k7.metric("SUNDAY REVENUE EXTRACTED", f"${sunday_gross:,.2f}", f"Net Impact: -${sunday_net_deduction:,.2f}")
     k8.metric("TOTAL PARCELS SHIPPED", f"{int(df_curr['Total Parcels'].sum() if 'Total Parcels' in df_curr.columns else len(df_curr)*115):,}")
 
+    st.divider()
+
+    # BONUS QUALIFICATION CARDS (Placed here!)
+    st.subheader("🎯 Quarterly Bonus Qualification")
+    b1, b2, b3 = st.columns(3)
+    b1.metric("Store Sales Bonus", f"${sales_bonus:,.2f}", f"Core Growth: {pct_inside_change:+.2f}%")
+    b2.metric("Labor Rate Bonus", f"${labor_bonus:,.2f}", f"Labor Rate: {labor_rate_curr:.2f}% (incl. Shipping)")
+    b3.metric("Total Qualified Bonus", f"${total_bonus:,.2f}", "Combined Payout")
+
+    st.divider()
+
     st.subheader("Quarterly Revenue & Channel Mix Progression")
     fig = go.Figure()
     fig.add_trace(go.Bar(name='Inside Store Sales', x=[f"{year-1} {quarter}", f"{year} {quarter}"], y=[gross_inside_prev, gross_inside_curr], marker_color='#4f46e5'))
@@ -278,7 +321,7 @@ with tab1:
     st.plotly_chart(fig, use_container_width=True)
 
 # -------------------------------------------------------------
-# TAB 2: EXACT TABLES FROM 2ND ATTACHMENT
+# TAB 2: EXACT TABLES FROM 2ND ATTACHMENT + BONUS SUMMARY
 # -------------------------------------------------------------
 with tab2:
     st.markdown(f"### 1. EXECUTIVE OVERVIEW ({quarter} {year} vs {quarter} {year-1})")
@@ -317,6 +360,13 @@ with tab2:
             f"{quarter} {year}": f"{labor_rate_curr:.2f}%",
             f"{quarter} {year-1}": f"{labor_rate_prev:.2f}%",
             "Gain/Loss ($)": f"{(labor_rate_curr - labor_rate_prev):+.2f}% pts",
+            "Gain/Loss (%)": ""
+        },
+        {
+            "Metric": "🏆 Total Qualified Bonus",
+            f"{quarter} {year}": f"${total_bonus:,.2f}",
+            f"{quarter} {year-1}": "-",
+            "Gain/Loss ($)": f"Sales: ${sales_bonus} | Labor: ${labor_bonus}",
             "Gain/Loss (%)": ""
         }
     ]
