@@ -20,14 +20,6 @@ st.markdown("""
         border-radius: 14px;
         margin-bottom: 20px;
     }
-    .table-header {
-        background-color: #2F4F4F;
-        color: white;
-        font-weight: bold;
-        padding: 8px 12px;
-        border-radius: 6px 6px 0 0;
-        margin-top: 15px;
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -117,9 +109,9 @@ def parse_kpi_text(raw_text):
     df = df.dropna(subset=['Date']).sort_values('Date').reset_index(drop=True)
     
     numeric_cols = [
-        'INSIDE SALES', 'Total Shipping Sales', 'Store Payroll 100hrs $2100', 
-        'VAPE SALES', 'INSIDE TRANS COUNT', 'Flaviar Sales', 'Shipstation Sales',
-        'Flaviar Parcels', 'Shipstation parcels', 'Total Parcels'
+        'INSIDE SALES', 'Weekly Inside sales w/o lottery', 'Total Weekly Sales with out Lottery',
+        'Total Shipping Sales', 'Store Payroll 100hrs $2100', 'VAPE SALES', 'INSIDE TRANS COUNT', 
+        'Flaviar Sales', 'Shipstation Sales', 'Flaviar Parcels', 'Shipstation parcels', 'Total Parcels'
     ]
     for col in numeric_cols:
         if col in df.columns:
@@ -215,13 +207,16 @@ df_prev = df_kpi[(df_kpi['Date'].dt.year == (year - 1)) &
                  (df_kpi['Date'].dt.month >= start_m) & 
                  (df_kpi['Date'].dt.month <= end_m)].tail(13).copy()
 
-gross_inside_curr = df_curr['INSIDE SALES'].sum()
+# Determine inside sales column (preference: Total Weekly Sales with out Lottery)
+inside_col = 'Total Weekly Sales with out Lottery' if 'Total Weekly Sales with out Lottery' in df_kpi.columns else 'INSIDE SALES'
+
+gross_inside_curr = df_curr[inside_col].sum()
 shipping_curr = df_curr['Total Shipping Sales'].sum()
 payroll_curr = df_curr['Store Payroll 100hrs $2100'].sum()
 vape_curr = df_curr['VAPE SALES'].sum()
 total_sales_curr = gross_inside_curr + shipping_curr
 
-gross_inside_prev = df_prev['INSIDE SALES'].sum()
+gross_inside_prev = df_prev[inside_col].sum()
 shipping_prev = df_prev['Total Shipping Sales'].sum()
 payroll_prev = df_prev['Store Payroll 100hrs $2100'].sum()
 vape_prev = df_prev['VAPE SALES'].sum()
@@ -235,6 +230,8 @@ else:
     adjusted_inside_prev = gross_inside_prev
 
 pct_inside_change = ((adjusted_inside_curr - adjusted_inside_prev) / adjusted_inside_prev) * 100 if adjusted_inside_prev else 0
+
+# Labor % of sales (Calculated using unadjusted gross sales with Sundays and Vape)
 labor_rate_curr = (payroll_curr / total_sales_curr) * 100 if total_sales_curr else 0
 labor_rate_prev = (payroll_prev / total_sales_prev) * 100 if total_sales_prev else 0
 
@@ -253,7 +250,7 @@ tab1, tab2, tab3 = st.tabs([
 with tab1:
     st.subheader("Apples-to-Apples Normalization Scorecard")
     s1, s2, s3, s4, s5 = st.columns(5)
-    s1.metric("1. Gross Inside Sales", f"${gross_inside_curr:,.2f}", "All Register Inside")
+    s1.metric("1. Gross Inside Sales", f"${gross_inside_curr:,.2f}", f"Source: {inside_col}")
     s2.metric("2. Vape Deductions", f"-${vape_curr:,.2f}", "Category Launch: May '25")
     s3.metric("3. Sunday Deductions", f"-${sunday_net_deduction:,.2f}", f"{len(df_sundays)} Sundays Detected")
     s4.metric("4. Adjusted Inside Alcohol", f"${adjusted_inside_curr:,.2f}", "Mon-Sat Core Non-Vape")
@@ -268,7 +265,7 @@ with tab1:
     k4.metric("TOTAL STORE PAYROLL", f"${payroll_curr:,.2f}", f"{((payroll_curr - payroll_prev)/payroll_prev)*100:+.2f}% YoY" if payroll_prev else "-")
 
     k5, k6, k7, k8 = st.columns(4)
-    k5.metric("LABOR % OF SALES", f"{labor_rate_curr:.2f}%", f"PY: {labor_rate_prev:.2f}%")
+    k5.metric("LABOR % OF SALES (INCL. SUN & VAPE)", f"{labor_rate_curr:.2f}%", f"PY: {labor_rate_prev:.2f}%")
     k6.metric("STORE TRANSACTIONS", f"{int(df_curr['INSIDE TRANS COUNT'].sum()):,}", f"Avg Ticket: ${gross_inside_curr / max(1, df_curr['INSIDE TRANS COUNT'].sum()):.2f}")
     k7.metric("SUNDAY REVENUE EXTRACTED", f"${sunday_gross:,.2f}", f"Net Impact: -${sunday_net_deduction:,.2f}")
     k8.metric("TOTAL PARCELS SHIPPED", f"{int(df_curr['Total Parcels'].sum() if 'Total Parcels' in df_curr.columns else len(df_curr)*115):,}")
@@ -316,7 +313,7 @@ with tab2:
             "Gain/Loss (%)": f"{((payroll_curr - payroll_prev)/payroll_prev)*100:+.2f}%" if payroll_prev else "-"
         },
         {
-            "Metric": "Labor Rate",
+            "Metric": "Labor Rate (Includes Sundays & Vape)",
             f"{quarter} {year}": f"{labor_rate_curr:.2f}%",
             f"{quarter} {year-1}": f"{labor_rate_prev:.2f}%",
             "Gain/Loss ($)": f"{(labor_rate_curr - labor_rate_prev):+.2f}% pts",
@@ -382,36 +379,45 @@ with tab2:
         st.info("ℹ️ Drop your Daily POS PDF into the left sidebar to automatically generate the 13-week Sunday Deep Dive table!")
 
 # -------------------------------------------------------------
-# TAB 3: WEEKLY SALES DATA BREAKDOWN
+# TAB 3: WEEKLY SALES DATA BREAKDOWN WITH TOTALS
 # -------------------------------------------------------------
 with tab3:
     st.markdown(f"### 13-Week Data Points from Weekly KPIs ({year} vs {year-1})")
     
     col_a, col_b = st.columns(2)
+    numeric_display = [
+        inside_col, 'VAPE SALES', 'Total Shipping Sales', 
+        'Flaviar Sales', 'Shipstation Sales', 'Store Payroll 100hrs $2100'
+    ]
+    
     with col_a:
         st.markdown(f"#### {quarter} {year} Weekly Line Items")
-        show_cols_curr = [c for c in ['Date', 'INSIDE SALES', 'VAPE SALES', 'Total Shipping Sales', 'Flaviar Sales', 'Shipstation Sales', 'Store Payroll 100hrs $2100'] if c in df_curr.columns]
-        df_c_show = df_curr[show_cols_curr].copy()
-        df_c_show['Date'] = df_c_show['Date'].dt.strftime('%Y-%m-%d')
-        st.dataframe(df_c_show.style.format({
-            'INSIDE SALES': "${:,.2f}",
-            'VAPE SALES': "${:,.2f}",
-            'Total Shipping Sales': "${:,.2f}",
-            'Flaviar Sales': "${:,.2f}",
-            'Shipstation Sales': "${:,.2f}",
-            'Store Payroll 100hrs $2100': "${:,.2f}"
-        }), use_container_width=True, hide_index=True)
+        show_cols_curr = [c for c in ['Date'] + numeric_display if c in df_curr.columns]
+        df_c = df_curr[show_cols_curr].copy()
+        df_c['Date'] = df_c['Date'].dt.strftime('%Y-%m-%d')
+        
+        # Calculate and append Totals row
+        total_dict_curr = {'Date': 'TOTAL'}
+        for col in numeric_display:
+            if col in df_curr.columns:
+                total_dict_curr[col] = df_curr[col].sum()
+        df_c = pd.concat([df_c, pd.DataFrame([total_dict_curr])], ignore_index=True)
+        
+        fmt_curr = {col: "${:,.2f}" for col in numeric_display if col in df_c.columns}
+        st.dataframe(df_c.style.format(fmt_curr), use_container_width=True, hide_index=True)
         
     with col_b:
         st.markdown(f"#### {quarter} {year-1} Weekly Line Items")
-        show_cols_prev = [c for c in ['Date', 'INSIDE SALES', 'VAPE SALES', 'Total Shipping Sales', 'Flaviar Sales', 'Shipstation Sales', 'Store Payroll 100hrs $2100'] if c in df_prev.columns]
-        df_p_show = df_prev[show_cols_prev].copy()
-        df_p_show['Date'] = df_p_show['Date'].dt.strftime('%Y-%m-%d')
-        st.dataframe(df_p_show.style.format({
-            'INSIDE SALES': "${:,.2f}",
-            'VAPE SALES': "${:,.2f}",
-            'Total Shipping Sales': "${:,.2f}",
-            'Flaviar Sales': "${:,.2f}",
-            'Shipstation Sales': "${:,.2f}",
-            'Store Payroll 100hrs $2100': "${:,.2f}"
-        }), use_container_width=True, hide_index=True)
+        show_cols_prev = [c for c in ['Date'] + numeric_display if c in df_prev.columns]
+        df_p = df_prev[show_cols_prev].copy()
+        df_p['Date'] = df_p['Date'].dt.strftime('%Y-%m-%d')
+        
+        # Calculate and append Totals row
+        total_dict_prev = {'Date': 'TOTAL'}
+        for col in numeric_display:
+            if col in df_prev.columns:
+                total_dict_prev[col] = df_prev[col].sum()
+        df_p = pd.concat([df_p, pd.DataFrame([total_dict_prev])], ignore_index=True)
+        
+        fmt_prev = {col: "${:,.2f}" for col in numeric_display if col in df_p.columns}
+        st.dataframe(df_p.style.format(fmt_prev), use_container_width=True, hide_index=True)
