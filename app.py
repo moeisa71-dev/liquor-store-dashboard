@@ -243,8 +243,10 @@ df_prev = df_kpi[(df_kpi['Date'].dt.year == (year - 1)) &
                  (df_kpi['Date'].dt.month >= start_m) & 
                  (df_kpi['Date'].dt.month <= end_m)].tail(13).copy()
 
-# Robust Column Pulls
-inside_names = ['Weekly Inside sales w/o lottery', 'INSIDE SALES']
+# Inside sales column definition
+inside_col = 'Weekly Inside sales w/o lottery' if 'Weekly Inside sales w/o lottery' in df_kpi.columns else 'INSIDE SALES'
+inside_names = [inside_col, 'Weekly Inside sales w/o lottery', 'INSIDE SALES']
+
 gross_inside_curr = get_col_sum(df_curr, inside_names)
 gross_inside_prev = get_col_sum(df_prev, inside_names)
 
@@ -410,7 +412,7 @@ with tab2:
             "Metric": "🏆 Total Qualified Bonus",
             f"{quarter} {year}": f"\${total_bonus:,.2f}",
             f"{quarter} {year-1}": "-",
-            "Gain/Loss ($)": f"Sales: ${sales_bonus} | Labor: ${labor_bonus}",
+            "Gain/Loss (\$)": f"Sales: ${sales_bonus} \vert{} Labor:${labor_bonus}",
             "Gain/Loss (%)": ""
         }
     ]
