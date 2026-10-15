@@ -24,7 +24,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # -------------------------------------------------------------
-# 1. Automatic PDF Parsing Engine (Cached for speed)
+# 1. Automatic PDF Parsing Engine (Pulls Sundays from POS PDF)
 # -------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def parse_sundays_from_pdf_bytes(pdf_bytes):
@@ -109,16 +109,14 @@ def parse_kpi_text(raw_text):
     df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
     df = df.dropna(subset=['Date']).sort_values('Date').reset_index(drop=True)
     
-    numeric_cols = [
-        'INSIDE SALES', 'Weekly Inside sales w/o lottery', 'Total Weekly Sales with out Lottery',
-        'Total Shipping Sales', 'Store Payroll 100hrs \$2100', 'Shipping Payroll', 'Total Labor Under',
-        'VAPE SALES', 'INSIDE TRANS COUNT', 'Flaviar Sales', 'Shipstation Sales', 
-        'Flaviar Parcels', 'Shipstation parcels', 'Total Parcels'
-    ]
-    for col in numeric_cols:
-        if col in df.columns:
-            df[col] = df[col].astype(str).str.replace('\$', '', regex=False).str.replace(',', '', regex=False).str.strip()
-            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+    for col in df.columns:
+        if col != 'Date':
+            # Clean dollar signs and commas for any numeric column
+            try:
+                df[col] = df[col].astype(str).str.replace('\$', '', regex=False).str.replace(',', '', regex=False).str.strip()
+                df[col] = pd.to_numeric(df[col], errors='ignore')
+            except Exception:
+                pass
             
     return df, None
 
@@ -157,6 +155,19 @@ if df_kpi is None:
     st.error("Cannot access Google Sheet. Please check link permissions or upload a backup CSV.")
     st.stop()
 
+# Helper function to safely find and sum columns
+def get_col_sum(df, possible_names):
+    for name in possible_names:
+        if name in df.columns:
+            return pd.to_numeric(df[name], errors='coerce').fillna(0).sum()
+    for col in df.columns:
+        for name in possible_names:
+            c_clean = col.lower().replace('\\', '').replace('\$', '').strip()
+            n_clean = name.lower().replace('\\', '').replace('\$', '').strip()
+            if c_clean == n_clean:
+                return pd.to_numeric(df[col], errors='coerce').fillna(0).sum()
+    return 0.0
+
 # -------------------------------------------------------------
 # 3. Header Controls
 # -------------------------------------------------------------
@@ -186,7 +197,6 @@ uploaded_pdf = st.sidebar.file_uploader(
 
 df_sundays = pd.DataFrame()
 
-# Check local repository archive paths
 possible_pdf_paths = [
     f"pdf_archive/{year}_{quarter}.pdf",
     f"sundays/{year}_{quarter}.pdf",
@@ -209,7 +219,6 @@ elif found_archived_file is not None:
     df_sundays = parse_sundays_from_pdf_bytes(file_bytes)
     st.sidebar.info(f"📂 Auto-loaded permanent archive: `{found_archived_file}` ({len(df_sundays)} Sundays)")
 else:
-    # Check if a pre-calculated CSV exists
     possible_csv_paths = [f"sundays/{year}_{quarter}.csv", f"{year}_{quarter}.csv"]
     for cp in possible_csv_paths:
         if os.path.exists(cp):
@@ -235,28 +244,33 @@ df_prev = df_kpi[(df_kpi['Date'].dt.year == (year - 1)) &
                  (df_kpi['Date'].dt.month >= start_m) & 
                  (df_kpi['Date'].dt.month <= end_m)].tail(13).copy()
 
-# Inside sales column definition
-inside_col = 'Weekly Inside sales w/o lottery' if 'Weekly Inside sales w/o lottery' in df_kpi.columns else 'INSIDE SALES'
+# Robust Column Pulls
+inside_names = ['Weekly Inside sales w/o lottery', 'INSIDE SALES']
+gross_inside_curr = get_col_sum(df_curr, inside_names)
+gross_inside_prev = get_col_sum(df_prev, inside_names)
 
-# Current Quarter Figures
-gross_inside_curr = df_curr[inside_col].sum()
-shipping_curr = df_curr['Total Shipping Sales'].sum()
-store_payroll_curr = df_curr['Store Payroll 100hrs \$2100'].sum()
-shipping_payroll_curr = df_curr['Shipping Payroll'].sum() if 'Shipping Payroll' in df_curr.columns else 0.0
+shipping_curr = get_col_sum(df_curr, ['Total Shipping Sales'])
+shipping_prev = get_col_sum(df_prev, ['Total Shipping Sales'])
+
+store_payroll_curr = get_col_sum(df_curr, ['Store Payroll 100hrs \$2100'])
+store_payroll_prev = get_col_sum(df_prev, ['Store Payroll 100hrs \$2100'])
+
+shipping_payroll_curr = get_col_sum(df_curr, ['Shipping Payroll'])
+shipping_payroll_prev = get_col_sum(df_prev, ['Shipping Payroll'])
+
 total_labor_curr = store_payroll_curr + shipping_payroll_curr
-
-vape_curr = df_curr['VAPE SALES'].sum()
-total_sales_curr = gross_inside_curr + shipping_curr
-
-# Previous Year Figures
-gross_inside_prev = df_prev[inside_col].sum()
-shipping_prev = df_prev['Total Shipping Sales'].sum()
-store_payroll_prev = df_prev['Store Payroll 100hrs \$2100'].sum()
-shipping_payroll_prev = df_prev['Shipping Payroll'].sum() if 'Shipping Payroll' in df_prev.columns else 0.0
 total_labor_prev = store_payroll_prev + shipping_payroll_prev
 
-vape_prev = df_prev['VAPE SALES'].sum()
+vape_curr = get_col_sum(df_curr, ['VAPE SALES'])
+vape_prev = get_col_sum(df_prev, ['VAPE SALES'])
+
+total_sales_curr = gross_inside_curr + shipping_curr
 total_sales_prev = gross_inside_prev + shipping_prev
+
+trans_count_curr = get_col_sum(df_curr, ['INSIDE TRANS COUNT'])
+parcels_curr = get_col_sum(df_curr, ['Total Parcels'])
+if parcels_curr == 0:
+    parcels_curr = len(df_curr) * 115
 
 # Normalization
 if apples_to_apples and year == 2026:
@@ -318,7 +332,7 @@ tab1, tab2, tab3 = st.tabs([
 with tab1:
     st.subheader("Apples-to-Apples Normalization Scorecard")
     s1, s2, s3, s4, s5 = st.columns(5)
-    s1.metric("1. Gross Inside Sales", f"\${gross_inside_curr:,.2f}", f"Source: {inside_col}")
+    s1.metric("1. Gross Inside Sales", f"\${gross_inside_curr:,.2f}", "Weekly Inside w/o Lottery")
     s2.metric("2. Vape Deductions", f"-\${vape_curr:,.2f}", "Category Launch: May '25")
     s3.metric("3. Sunday Deductions", f"-\${sunday_net_deduction:,.2f}", f"{len(df_sundays)} Sundays Detected")
     s4.metric("4. Adjusted Inside Alcohol", f"\${adjusted_inside_curr:,.2f}", "Mon-Sat Core Non-Vape")
@@ -335,9 +349,9 @@ with tab1:
 
     k5, k6, k7, k8 = st.columns(4)
     k5.metric("TOTAL LABOR % OF SALES", f"{labor_rate_curr:.2f}%", f"PY: {labor_rate_prev:.2f}%")
-    k6.metric("STORE TRANSACTIONS", f"{int(df_curr['INSIDE TRANS COUNT'].sum()):,}", f"Avg Ticket: \${gross_inside_curr / max(1, df_curr['INSIDE TRANS COUNT'].sum()):.2f}")
+    k6.metric("STORE TRANSACTIONS", f"{int(trans_count_curr):,}", f"Avg Ticket: \${gross_inside_curr / max(1, trans_count_curr):.2f}")
     k7.metric("SUNDAY REVENUE EXTRACTED", f"\${sunday_gross:,.2f}", f"Net Impact: -\${sunday_net_deduction:,.2f}")
-    k8.metric("TOTAL PARCELS SHIPPED", f"{int(df_curr['Total Parcels'].sum() if 'Total Parcels' in df_curr.columns else len(df_curr)*115):,}")
+    k8.metric("TOTAL PARCELS SHIPPED", f"{int(parcels_curr):,}")
 
     st.divider()
 
@@ -397,7 +411,7 @@ with tab2:
             "Metric": "🏆 Total Qualified Bonus",
             f"{quarter} {year}": f"\${total_bonus:,.2f}",
             f"{quarter} {year-1}": "-",
-            "Gain/Loss ($)": f"Sales: ${sales_bonus} | Labor: ${labor_bonus}",
+            "Gain/Loss (\$)": f"Sales: ${sales_bonus} \vert{} Labor:${labor_bonus}",
             "Gain/Loss (%)": ""
         }
     ]
@@ -467,7 +481,7 @@ with tab3:
     
     col_a, col_b = st.columns(2)
     numeric_display = [
-        inside_col, 'Total Shipping Sales', 'Total Weekly Sales with out Lottery', 
+        'Weekly Inside sales w/o lottery', 'Total Shipping Sales', 'Total Weekly Sales with out Lottery', 
         'VAPE SALES', 'Store Payroll 100hrs \$2100', 'Shipping Payroll', 'Total Labor Under'
     ]
     
@@ -481,7 +495,7 @@ with tab3:
         total_dict_curr = {'Date': 'TOTAL'}
         for col in numeric_display:
             if col in df_curr.columns:
-                total_dict_curr[col] = df_curr[col].sum()
+                total_dict_curr[col] = pd.to_numeric(df_curr[col], errors='coerce').fillna(0).sum()
         df_c = pd.concat([df_c, pd.DataFrame([total_dict_curr])], ignore_index=True)
         
         fmt_curr = {col: "\${:,.2f}" for col in numeric_display if col in df_c.columns}
@@ -497,7 +511,7 @@ with tab3:
         total_dict_prev = {'Date': 'TOTAL'}
         for col in numeric_display:
             if col in df_prev.columns:
-                total_dict_prev[col] = df_prev[col].sum()
+                total_dict_prev[col] = pd.to_numeric(df_prev[col], errors='coerce').fillna(0).sum()
         df_p = pd.concat([df_p, pd.DataFrame([total_dict_prev])], ignore_index=True)
         
         fmt_prev = {col: "\${:,.2f}" for col in numeric_display if col in df_p.columns}
