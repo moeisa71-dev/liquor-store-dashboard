@@ -260,8 +260,14 @@ store_payroll_prev = get_col_sum(df_prev, ['Store Payroll 100hrs \$2100'])
 shipping_payroll_curr = get_col_sum(df_curr, ['Shipping Payroll'])
 shipping_payroll_prev = get_col_sum(df_prev, ['Shipping Payroll'])
 
-total_labor_curr = store_payroll_curr + shipping_payroll_curr
-total_labor_prev = store_payroll_prev + shipping_payroll_prev
+# Pull Total Labor directly from the sheet
+total_labor_curr = get_col_sum(df_curr, ['Total Labor Under', 'Total Labor'])
+if total_labor_curr == 0.0:
+    total_labor_curr = store_payroll_curr + shipping_payroll_curr
+
+total_labor_prev = get_col_sum(df_prev, ['Total Labor Under', 'Total Labor'])
+if total_labor_prev == 0.0:
+    total_labor_prev = store_payroll_prev + shipping_payroll_prev
 
 vape_curr = get_col_sum(df_curr, ['VAPE SALES'])
 vape_prev = get_col_sum(df_prev, ['VAPE SALES'])
