@@ -109,8 +109,9 @@ def parse_kpi_text(raw_text):
     
     numeric_cols = [
         'INSIDE SALES', 'Weekly Inside sales w/o lottery', 'Total Weekly Sales with out Lottery',
-        'Total Shipping Sales', 'Store Payroll 100hrs $2100', 'VAPE SALES', 'INSIDE TRANS COUNT', 
-        'Flaviar Sales', 'Shipstation Sales', 'Flaviar Parcels', 'Shipstation parcels', 'Total Parcels'
+        'Total Shipping Sales', 'Store Payroll 100hrs $2100', 'Shipping Payroll', 'Total Labor Under',
+        'VAPE SALES', 'INSIDE TRANS COUNT', 'Flaviar Sales', 'Shipstation Sales', 
+        'Flaviar Parcels', 'Shipstation parcels', 'Total Parcels'
     ]
     for col in numeric_cols:
         if col in df.columns:
@@ -209,18 +210,27 @@ df_prev = df_kpi[(df_kpi['Date'].dt.year == (year - 1)) &
 # Inside sales column definition
 inside_col = 'Weekly Inside sales w/o lottery' if 'Weekly Inside sales w/o lottery' in df_kpi.columns else 'INSIDE SALES'
 
+# Current Quarter Figures
 gross_inside_curr = df_curr[inside_col].sum()
 shipping_curr = df_curr['Total Shipping Sales'].sum()
-payroll_curr = df_curr['Store Payroll 100hrs $2100'].sum()
+store_payroll_curr = df_curr['Store Payroll 100hrs $2100'].sum()
+shipping_payroll_curr = df_curr['Shipping Payroll'].sum() if 'Shipping Payroll' in df_curr.columns else 0.0
+total_labor_curr = store_payroll_curr + shipping_payroll_curr
+
 vape_curr = df_curr['VAPE SALES'].sum()
 total_sales_curr = gross_inside_curr + shipping_curr
 
+# Previous Year Figures
 gross_inside_prev = df_prev[inside_col].sum()
 shipping_prev = df_prev['Total Shipping Sales'].sum()
-payroll_prev = df_prev['Store Payroll 100hrs $2100'].sum()
+store_payroll_prev = df_prev['Store Payroll 100hrs $2100'].sum()
+shipping_payroll_prev = df_prev['Shipping Payroll'].sum() if 'Shipping Payroll' in df_prev.columns else 0.0
+total_labor_prev = store_payroll_prev + shipping_payroll_prev
+
 vape_prev = df_prev['VAPE SALES'].sum()
 total_sales_prev = gross_inside_prev + shipping_prev
 
+# Normalization
 if apples_to_apples and year == 2026:
     adjusted_inside_curr = gross_inside_curr - vape_curr - sunday_net_deduction
     adjusted_inside_prev = gross_inside_prev - vape_prev
@@ -230,12 +240,12 @@ else:
 
 pct_inside_change = ((adjusted_inside_curr - adjusted_inside_prev) / adjusted_inside_prev) * 100 if adjusted_inside_prev else 0
 
-# Labor % of sales (Calculated using unadjusted gross sales with Sundays and Vape)
-labor_rate_curr = (payroll_curr / total_sales_curr) * 100 if total_sales_curr else 0
-labor_rate_prev = (payroll_prev / total_sales_prev) * 100 if total_sales_prev else 0
+# Total Labor Rate (Total Labor / Total Sales including Sundays and Vape)
+labor_rate_curr = (total_labor_curr / total_sales_curr) * 100 if total_sales_curr else 0
+labor_rate_prev = (total_labor_prev / total_sales_prev) * 100 if total_sales_prev else 0
 
 # -------------------------------------------------------------
-# 6. Bonus Calculations Engine
+# 6. Bonus Calculations Engine (Using Total Labor Rate)
 # -------------------------------------------------------------
 def get_sales_bonus(growth):
     if growth >= 25.0:
@@ -293,10 +303,10 @@ with tab1:
     k1.metric("TOTAL GROSS SALES", f"${total_sales_curr:,.2f}", f"{((total_sales_curr - total_sales_prev)/total_sales_prev)*100:+.2f}% YoY" if total_sales_prev else "-")
     k2.metric("CORE ADJUSTED INSIDE", f"${adjusted_inside_curr:,.2f}", f"{pct_inside_change:+.2f}% Core")
     k3.metric("SHIPPING SALES (E-COMM)", f"${shipping_curr:,.2f}", f"{((shipping_curr - shipping_prev)/shipping_prev)*100:+.2f}% YoY" if shipping_prev else "-")
-    k4.metric("TOTAL STORE PAYROLL", f"${payroll_curr:,.2f}", f"{((payroll_curr - payroll_prev)/payroll_prev)*100:+.2f}% YoY" if payroll_prev else "-")
+    k4.metric("TOTAL LABOR (STORE + SHIP)", f"${total_labor_curr:,.2f}", f"{((total_labor_curr - total_labor_prev)/total_labor_prev)*100:+.2f}% YoY" if total_labor_prev else "-")
 
     k5, k6, k7, k8 = st.columns(4)
-    k5.metric("LABOR % OF SALES (INCL. SUN & VAPE)", f"{labor_rate_curr:.2f}%", f"PY: {labor_rate_prev:.2f}%")
+    k5.metric("TOTAL LABOR % OF SALES", f"{labor_rate_curr:.2f}%", f"PY: {labor_rate_prev:.2f}%")
     k6.metric("STORE TRANSACTIONS", f"{int(df_curr['INSIDE TRANS COUNT'].sum()):,}", f"Avg Ticket: ${gross_inside_curr / max(1, df_curr['INSIDE TRANS COUNT'].sum()):.2f}")
     k7.metric("SUNDAY REVENUE EXTRACTED", f"${sunday_gross:,.2f}", f"Net Impact: -${sunday_net_deduction:,.2f}")
     k8.metric("TOTAL PARCELS SHIPPED", f"{int(df_curr['Total Parcels'].sum() if 'Total Parcels' in df_curr.columns else len(df_curr)*115):,}")
@@ -307,7 +317,7 @@ with tab1:
     st.subheader("🎯 Quarterly Bonus Qualification")
     b1, b2, b3 = st.columns(3)
     b1.metric("Store Sales Bonus", f"${sales_bonus:,.2f}", f"Core Growth: {pct_inside_change:+.2f}%")
-    b2.metric("Labor Rate Bonus", f"${labor_bonus:,.2f}", f"Labor Rate: {labor_rate_curr:.2f}% (incl. Shipping)")
+    b2.metric("Labor Rate Bonus", f"${labor_bonus:,.2f}", f"Total Labor Rate: {labor_rate_curr:.2f}%")
     b3.metric("Total Qualified Bonus", f"${total_bonus:,.2f}", "Combined Payout")
 
 # -------------------------------------------------------------
@@ -316,6 +326,9 @@ with tab1:
 with tab2:
     st.markdown(f"### 1. EXECUTIVE OVERVIEW ({quarter} {year} vs {quarter} {year-1})")
     
+    labor_diff = total_labor_curr - total_labor_prev
+    labor_pct = (labor_diff / total_labor_prev)*100 if total_labor_prev else 0.0
+
     t1_data = [
         {
             "Metric": f"Total {quarter} Sales",
@@ -339,14 +352,14 @@ with tab2:
             "Gain/Loss (%)": f"{((shipping_curr - shipping_prev)/shipping_prev)*100:+.2f}%" if shipping_prev else "-"
         },
         {
-            "Metric": f"{quarter} Store Payroll",
-            f"{quarter} {year}": f"${payroll_curr:,.2f}",
-            f"{quarter} {year-1}": f"${payroll_prev:,.2f}",
-            "Gain/Loss ($)": f"${(payroll_curr - payroll_prev):+,.2f}",
-            "Gain/Loss (%)": f"{((payroll_curr - payroll_prev)/payroll_prev)*100:+.2f}%" if payroll_prev else "-"
+            "Metric": f"{quarter} Total Labor (Store + Shipping Payroll)",
+            f"{quarter} {year}": f"${total_labor_curr:,.2f}",
+            f"{quarter} {year-1}": f"${total_labor_prev:,.2f}",
+            "Gain/Loss ($)": f"${labor_diff:+,.2f}",
+            "Gain/Loss (%)": f"{labor_pct:+.2f}%" if total_labor_prev else "-"
         },
         {
-            "Metric": "Labor Rate (Includes Sundays & Vape)",
+            "Metric": "Labor Rate (Total Labor / Total Sales)",
             f"{quarter} {year}": f"{labor_rate_curr:.2f}%",
             f"{quarter} {year-1}": f"{labor_rate_prev:.2f}%",
             "Gain/Loss ($)": f"{(labor_rate_curr - labor_rate_prev):+.2f}% pts",
@@ -427,7 +440,7 @@ with tab3:
     col_a, col_b = st.columns(2)
     numeric_display = [
         inside_col, 'Total Shipping Sales', 'Total Weekly Sales with out Lottery', 
-        'VAPE SALES', 'Flaviar Sales', 'Shipstation Sales', 'Store Payroll 100hrs $2100'
+        'VAPE SALES', 'Store Payroll 100hrs $2100', 'Shipping Payroll', 'Total Labor Under'
     ]
     
     with col_a:
@@ -436,7 +449,7 @@ with tab3:
         df_c = df_curr[show_cols_curr].copy()
         df_c['Date'] = df_c['Date'].dt.strftime('%Y-%m-%d')
         
-        # Calculate and append Totals row
+        # Append Totals row
         total_dict_curr = {'Date': 'TOTAL'}
         for col in numeric_display:
             if col in df_curr.columns:
@@ -452,7 +465,7 @@ with tab3:
         df_p = df_prev[show_cols_prev].copy()
         df_p['Date'] = df_p['Date'].dt.strftime('%Y-%m-%d')
         
-        # Calculate and append Totals row
+        # Append Totals row
         total_dict_prev = {'Date': 'TOTAL'}
         for col in numeric_display:
             if col in df_prev.columns:
