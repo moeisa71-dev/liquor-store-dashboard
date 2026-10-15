@@ -5,6 +5,7 @@ import pypdf
 import re
 from datetime import datetime
 import io
+import csv
 import requests
 
 st.set_page_config(page_title="Liquors Ventures Analytics", layout="wide")
@@ -73,25 +74,30 @@ def parse_sundays_from_pdf(pdf_file_or_path):
     return df
 
 # -------------------------------------------------------------
-# 2. Resilient Google Sheet / CSV Loader
+# 2. Resilient Google Sheet / CSV Loader (Using gid=0)
 # -------------------------------------------------------------
 SHEET_ID = "1NYSifzt4YDDZUkHviAD7bjBSFqbAJCR6vXBoXmHzIv0"
-CSV_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet=Weekly%20KPIs"
+URL_CANDIDATES = [
+    f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid=0",
+    f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&gid=0",
+    f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet=Weekly%20KPIs"
+]
 
 def parse_kpi_text(raw_text):
     if "<!DOCTYPE html>" in raw_text or "<html" in raw_text.lower():
-        return None, "Google returned an HTML login page instead of spreadsheet data. Please ensure the Google Sheet permissions are set to 'Anyone with the link can view'."
+        return None, "Google returned an HTML login page instead of spreadsheet data."
     
     lines = raw_text.strip().split('\n')
     header_idx = None
-    for idx, line in enumerate(lines[:15]):
-        tokens = [t.strip().strip('"').strip("'") for t in line.split(',')]
-        if 'Date' in tokens:
+    for idx, line in enumerate(lines[:20]):
+        row = list(csv.reader([line]))[0] if line else []
+        clean_tokens = [c.strip() for c in row]
+        if 'Date' in clean_tokens:
             header_idx = idx
             break
             
     if header_idx is None:
-        return None, "Could not locate the 'Date' header row in the Google Sheet data."
+        return None, "Could not locate 'Date' header row in the Google Sheet data."
         
     df = pd.read_csv(io.StringIO(raw_text), skiprows=header_idx)
     df.columns = [str(c).strip() for c in df.columns]
@@ -103,12 +109,12 @@ def parse_kpi_text(raw_text):
     df = df.dropna(subset=['Date']).sort_values('Date').reset_index(drop=True)
     
     numeric_cols = [
-        'INSIDE SALES', 'Total Shipping Sales', 'Store Payroll 100hrs \$2100', 
+        'INSIDE SALES', 'Total Shipping Sales', 'Store Payroll 100hrs $2100', 
         'VAPE SALES', 'INSIDE TRANS COUNT'
     ]
     for col in numeric_cols:
         if col in df.columns:
-            df[col] = df[col].astype(str).str.replace('\$', '').str.replace(',', '').str.strip()
+            df[col] = df[col].astype(str).str.replace('$', '').str.replace(',', '').str.strip()
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
             
     return df, None
@@ -118,13 +124,14 @@ def fetch_online_kpis():
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
     }
-    try:
-        resp = requests.get(CSV_URL, headers=headers, timeout=15)
-        if resp.status_code == 200:
-            return resp.text, None
-        return None, f"HTTP Error {resp.status_code} fetching Google Sheet."
-    except Exception as e:
-        return None, str(e)
+    for url in URL_CANDIDATES:
+        try:
+            resp = requests.get(url, headers=headers, timeout=12)
+            if resp.status_code == 200 and "Date" in resp.text:
+                return resp.text, None
+        except Exception:
+            continue
+    return None, "Could not connect to Google Sheet via export endpoints."
 
 # Sidebar data loading
 st.sidebar.header("⚙️ Data Settings")
@@ -136,7 +143,7 @@ if csv_text:
     if parse_err:
         st.sidebar.warning(parse_err)
 
-# Optional Manual CSV upload fallback if Google blocks connection
+# Backup manual upload
 manual_kpi = st.sidebar.file_uploader("Upload Weekly KPIs CSV (Backup)", type=["csv"])
 if manual_kpi is not None:
     manual_text = manual_kpi.getvalue().decode('utf-8', errors='ignore')
@@ -144,18 +151,15 @@ if manual_kpi is not None:
     if df_manual is not None:
         df_kpi = df_manual
         st.sidebar.success("Loaded Weekly KPIs from uploaded file!")
-    else:
-        st.sidebar.error(manual_err)
 
 if df_kpi is None:
     st.error("""
     ### ⚠️ Cannot Access Google Sheet Data
-    Please check that your Google Sheet has sharing set to:
-    **"Anyone with the link can view"**
+    Google's automated export was blocked or returned unexpected data.
     
-    *URL:* https://docs.google.com/spreadsheets/d/1NYSifzt4YDDZUkHviAD7bjBSFqbAJCR6vXBoXmHzIv0/edit
-    
-    *(Alternatively, you can upload `Weekly_KPIs.csv` in the sidebar to view your dashboard immediately).*
+    **Immediate Fix:**
+    1. In your Google Sheet, click **File** > **Download** > **Comma Separated Values (.csv)**.
+    2. Click **Upload** under **Upload Weekly KPIs CSV (Backup)** in the left sidebar.
     """)
     st.stop()
 
@@ -213,13 +217,13 @@ df_prev = df_kpi[(df_kpi['Date'].dt.year == (year - 1)) &
 
 gross_inside_curr = df_curr['INSIDE SALES'].sum()
 shipping_curr = df_curr['Total Shipping Sales'].sum()
-payroll_curr = df_curr['Store Payroll 100hrs \$2100'].sum()
+payroll_curr = df_curr['Store Payroll 100hrs $2100'].sum()
 vape_curr = df_curr['VAPE SALES'].sum()
 total_sales_curr = gross_inside_curr + shipping_curr
 
 gross_inside_prev = df_prev['INSIDE SALES'].sum()
 shipping_prev = df_prev['Total Shipping Sales'].sum()
-payroll_prev = df_prev['Store Payroll 100hrs \$2100'].sum()
+payroll_prev = df_prev['Store Payroll 100hrs $2100'].sum()
 vape_prev = df_prev['VAPE SALES'].sum()
 total_sales_prev = gross_inside_prev + shipping_prev
 
@@ -238,11 +242,11 @@ labor_rate = (payroll_curr / total_sales_curr) * 100 if total_sales_curr else 0
 # -------------------------------------------------------------
 st.subheader("Apples-to-Apples Normalization Scorecard")
 s1, s2, s3, s4, s5 = st.columns(5)
-s1.metric("1. Gross Inside Sales", f"\${gross_inside_curr:,.2f}", "All Register Inside")
-s2.metric("2. Vape Deductions", f"-\${vape_curr:,.2f}", "Category Launch: May '25")
-s3.metric("3. Sunday Deductions", f"-\${sunday_net_deduction:,.2f}", f"{len(df_sundays)} Sundays Detected")
-s4.metric("4. Adjusted Inside Alcohol", f"\${adjusted_inside_curr:,.2f}", "Mon-Sat Core Non-Vape")
-s5.metric("5. Normalized YoY", f"{pct_inside_change:.2f}%", f"vs PY Baseline: \${adjusted_inside_prev:,.2f}")
+s1.metric("1. Gross Inside Sales", f"${gross_inside_curr:,.2f}", "All Register Inside")
+s2.metric("2. Vape Deductions", f"-${vape_curr:,.2f}", "Category Launch: May '25")
+s3.metric("3. Sunday Deductions", f"-${sunday_net_deduction:,.2f}", f"{len(df_sundays)} Sundays Detected")
+s4.metric("4. Adjusted Inside Alcohol", f"${adjusted_inside_curr:,.2f}", "Mon-Sat Core Non-Vape")
+s5.metric("5. Normalized YoY", f"{pct_inside_change:.2f}%", f"vs PY Baseline: ${adjusted_inside_prev:,.2f}")
 
 st.divider()
 
@@ -250,15 +254,15 @@ st.divider()
 # 7. Render 8 KPI Cards
 # -------------------------------------------------------------
 k1, k2, k3, k4 = st.columns(4)
-k1.metric("TOTAL GROSS SALES", f"\${total_sales_curr:,.2f}", f"{((total_sales_curr - total_sales_prev)/total_sales_prev)*100:+.2f}% YoY" if total_sales_prev else "-")
-k2.metric("CORE ADJUSTED INSIDE", f"\${adjusted_inside_curr:,.2f}", f"{pct_inside_change:+.2f}% Core")
-k3.metric("SHIPPING SALES (E-COMM)", f"\${shipping_curr:,.2f}", f"{((shipping_curr - shipping_prev)/shipping_prev)*100:+.2f}% YoY" if shipping_prev else "-")
-k4.metric("TOTAL STORE PAYROLL", f"\${payroll_curr:,.2f}", f"{((payroll_curr - payroll_prev)/payroll_prev)*100:+.2f}% YoY" if payroll_prev else "-")
+k1.metric("TOTAL GROSS SALES", f"${total_sales_curr:,.2f}", f"{((total_sales_curr - total_sales_prev)/total_sales_prev)*100:+.2f}% YoY" if total_sales_prev else "-")
+k2.metric("CORE ADJUSTED INSIDE", f"${adjusted_inside_curr:,.2f}", f"{pct_inside_change:+.2f}% Core")
+k3.metric("SHIPPING SALES (E-COMM)", f"${shipping_curr:,.2f}", f"{((shipping_curr - shipping_prev)/shipping_prev)*100:+.2f}% YoY" if shipping_prev else "-")
+k4.metric("TOTAL STORE PAYROLL", f"${payroll_curr:,.2f}", f"{((payroll_curr - payroll_prev)/payroll_prev)*100:+.2f}% YoY" if payroll_prev else "-")
 
 k5, k6, k7, k8 = st.columns(4)
 k5.metric("LABOR % OF SALES", f"{labor_rate:.2f}%", f"PY: {(payroll_prev/total_sales_prev)*100:.2f}%" if total_sales_prev else "-")
-k6.metric("STORE TRANSACTIONS", f"{int(df_curr['INSIDE TRANS COUNT'].sum()):,}", f"Avg Ticket: \${gross_inside_curr / max(1, df_curr['INSIDE TRANS COUNT'].sum()):.2f}")
-k7.metric("SUNDAY REVENUE EXTRACTED", f"\${sunday_gross:,.2f}", f"Net Impact: -\${sunday_net_deduction:,.2f}")
+k6.metric("STORE TRANSACTIONS", f"{int(df_curr['INSIDE TRANS COUNT'].sum()):,}", f"Avg Ticket: ${gross_inside_curr / max(1, df_curr['INSIDE TRANS COUNT'].sum()):.2f}")
+k7.metric("SUNDAY REVENUE EXTRACTED", f"${sunday_gross:,.2f}", f"Net Impact: -${sunday_net_deduction:,.2f}")
 k8.metric("TOTAL PARCELS SHIPPED", f"{int(df_curr['Total Shipping Sales'].count() * 115):,}")
 
 # -------------------------------------------------------------
@@ -277,7 +281,7 @@ st.plotly_chart(fig, use_container_width=True)
 if not df_sundays.empty:
     with st.expander("🔍 View Extracted Sunday Audit Table"):
         st.dataframe(df_sundays.style.format({
-            "Gross_Total": "\${:,.2f}",
-            "Vape_Sales": "\${:,.2f}",
-            "Net_Alcohol": "\${:,.2f}"
+            "Gross_Total": "${:,.2f}",
+            "Vape_Sales": "${:,.2f}",
+            "Net_Alcohol": "${:,.2f}"
         }), use_container_width=True)
