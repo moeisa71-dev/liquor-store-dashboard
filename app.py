@@ -111,7 +111,6 @@ def parse_kpi_text(raw_text):
     
     for col in df.columns:
         if col != 'Date':
-            # Clean dollar signs and commas for any numeric column
             try:
                 df[col] = df[col].astype(str).str.replace('\$', '', regex=False).str.replace(',', '', regex=False).str.strip()
                 df[col] = pd.to_numeric(df[col], errors='ignore')
@@ -481,7 +480,7 @@ with tab3:
     
     col_a, col_b = st.columns(2)
     numeric_display = [
-        'Weekly Inside sales w/o lottery', 'Total Shipping Sales', 'Total Weekly Sales with out Lottery', 
+        inside_col, 'Total Shipping Sales', 'Total Weekly Sales with out Lottery', 
         'VAPE SALES', 'Store Payroll 100hrs \$2100', 'Shipping Payroll', 'Total Labor Under'
     ]
     
