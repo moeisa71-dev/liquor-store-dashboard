@@ -24,10 +24,10 @@ st.markdown("""
 
 def safe_currency(val):
     if val is None or pd.isna(val) or val == '':
-        return "$0.00"
+        return "\$0.00"
     try:
-        val_f = float(str(val).replace('$', '').replace(',', '').strip())
-        return f"${val_f:,.2f}"
+        val_f = float(str(val).replace('\$', '').replace(',', '').strip())
+        return f"\${val_f:,.2f}"
     except Exception:
         return str(val)
 
@@ -123,7 +123,7 @@ def parse_kpi_text(raw_text):
             clean_col_data = (
                 df[col]
                 .astype(str)
-                .str.replace('$', '', regex=False)
+                .str.replace('\$', '', regex=False)
                 .str.replace(',', '', regex=False)
                 .str.strip()
             )
@@ -247,6 +247,7 @@ df_prev = df_kpi[(df_kpi['Date'].dt.year == (year - 1)) &
                  (df_kpi['Date'].dt.month >= start_m) & 
                  (df_kpi['Date'].dt.month <= end_m)].tail(13).copy()
 
+# Pull inside sales w/o lottery
 inside_names = ['Weekly Inside sales w/o lottery', 'INSIDE SALES']
 gross_inside_curr = get_col_sum(df_curr, inside_names)
 gross_inside_prev = get_col_sum(df_prev, inside_names)
@@ -254,20 +255,14 @@ gross_inside_prev = get_col_sum(df_prev, inside_names)
 shipping_curr = get_col_sum(df_curr, ['Total Shipping Sales'])
 shipping_prev = get_col_sum(df_prev, ['Total Shipping Sales'])
 
-store_payroll_curr = get_col_sum(df_curr, ['Store Payroll 100hrs \$2100'])
-store_payroll_prev = get_col_sum(df_prev, ['Store Payroll 100hrs \$2100'])
-
-shipping_payroll_curr = get_col_sum(df_curr, ['Shipping Payroll'])
-shipping_payroll_prev = get_col_sum(df_prev, ['Shipping Payroll'])
-
-# Pull Total Labor directly from the sheet
-total_labor_curr = get_col_sum(df_curr, ['Total Labor Under', 'Total Labor'])
+# Pull Total Labor Under directly from sheet
+total_labor_curr = get_col_sum(df_curr, ['Total Labor Under'])
 if total_labor_curr == 0.0:
-    total_labor_curr = store_payroll_curr + shipping_payroll_curr
+    total_labor_curr = get_col_sum(df_curr, ['Store Payroll 100hrs \$2100']) + get_col_sum(df_curr, ['Shipping Payroll'])
 
-total_labor_prev = get_col_sum(df_prev, ['Total Labor Under', 'Total Labor'])
+total_labor_prev = get_col_sum(df_prev, ['Total Labor Under'])
 if total_labor_prev == 0.0:
-    total_labor_prev = store_payroll_prev + shipping_payroll_prev
+    total_labor_prev = get_col_sum(df_prev, ['Store Payroll 100hrs \$2100']) + get_col_sum(df_prev, ['Shipping Payroll'])
 
 vape_curr = get_col_sum(df_curr, ['VAPE SALES'])
 vape_prev = get_col_sum(df_prev, ['VAPE SALES'])
@@ -280,21 +275,39 @@ parcels_curr = get_col_sum(df_curr, ['Total Parcels'])
 if parcels_curr == 0:
     parcels_curr = len(df_curr) * 115
 
-# Normalization
+# Dynamic Normalization:
+# Q1 and Q2 2026: Vape is deducted because vape launched late May 2025.
+# Q3 2026 and onward: Vape is INCLUDED because both years had full vape operations.
 if apples_to_apples and year == 2026:
-    adjusted_inside_curr = gross_inside_curr - vape_curr - sunday_net_deduction
-    adjusted_inside_prev = gross_inside_prev - vape_prev
+    if quarter in ["Q1", "Q2"]:
+        vape_deduction_curr = vape_curr
+        vape_deduction_prev = vape_prev
+        sunday_deduction_to_use = sunday_net_deduction
+        vape_status_label = "Deducted (Vape Launched May '25)"
+    else:
+        vape_deduction_curr = 0.0
+        vape_deduction_prev = 0.0
+        sunday_deduction_to_use = sunday_gross
+        vape_status_label = "Included (Active in Both Years)"
+
+    adjusted_inside_curr = gross_inside_curr - vape_deduction_curr - sunday_deduction_to_use
+    adjusted_inside_prev = gross_inside_prev - vape_deduction_prev
 else:
+    vape_deduction_curr = 0.0
+    vape_deduction_prev = 0.0
+    sunday_deduction_to_use = 0.0
     adjusted_inside_curr = gross_inside_curr
     adjusted_inside_prev = gross_inside_prev
+    vape_status_label = "Unadjusted (Apples-to-Apples OFF)"
 
 pct_inside_change = ((adjusted_inside_curr - adjusted_inside_prev) / adjusted_inside_prev) * 100 if adjusted_inside_prev != 0 else 0.0
 
+# Total Labor Rate (Total Labor / Total Sales including Sundays and Vape)
 labor_rate_curr = (total_labor_curr / total_sales_curr) * 100 if total_sales_curr != 0 else 0.0
 labor_rate_prev = (total_labor_prev / total_sales_prev) * 100 if total_sales_prev != 0 else 0.0
 
 # -------------------------------------------------------------
-# 6. Bonus Calculations Engine
+# 6. Bonus Calculations Engine (Using Total Labor Rate)
 # -------------------------------------------------------------
 def get_sales_bonus(growth):
     if growth >= 25.0:
@@ -340,9 +353,9 @@ with tab1:
     st.subheader("Apples-to-Apples Normalization Scorecard")
     s1, s2, s3, s4, s5 = st.columns(5)
     s1.metric("1. Gross Inside Sales", f"\${gross_inside_curr:,.2f}", "Weekly Inside w/o Lottery")
-    s2.metric("2. Vape Deductions", f"-\${vape_curr:,.2f}", "Category Launch: May '25")
-    s3.metric("3. Sunday Deductions", f"-\${sunday_net_deduction:,.2f}", f"{len(df_sundays)} Sundays Detected")
-    s4.metric("4. Adjusted Inside Alcohol", f"\${adjusted_inside_curr:,.2f}", "Mon-Sat Core Non-Vape")
+    s2.metric("2. Vape Deductions", f"-\${vape_deduction_curr:,.2f}", vape_status_label)
+    s3.metric("3. Sunday Deductions", f"-\${sunday_deduction_to_use:,.2f}", f"{len(df_sundays)} Sundays Detected")
+    s4.metric("4. Adjusted Inside Sales", f"\${adjusted_inside_curr:,.2f}", "Mon-Sat Core Store Sales")
     s5.metric("5. Normalized YoY", f"{pct_inside_change:+.2f}%", f"vs PY Baseline: \${adjusted_inside_prev:,.2f}")
 
     st.divider()
@@ -385,7 +398,7 @@ with tab2:
             "Gain/Loss (%)": f"{((total_sales_curr - total_sales_prev)/total_sales_prev)*100:+.2f}%" if total_sales_prev != 0 else "-"
         },
         {
-            "Metric": "Net Inside Alcohol Sales",
+            "Metric": "Net Inside Store Sales",
             f"{quarter} {year}": f"\${adjusted_inside_curr:,.2f}",
             f"{quarter} {year-1}": f"\${adjusted_inside_prev:,.2f}",
             "Gain/Loss (\$)": f"\${(adjusted_inside_curr - adjusted_inside_prev):+,.2f}",
@@ -396,7 +409,7 @@ with tab2:
             f"{quarter} {year}": f"\${shipping_curr:,.2f}",
             f"{quarter} {year-1}": f"\${shipping_prev:,.2f}",
             "Gain/Loss (\$)": f"\${(shipping_curr - shipping_prev):+,.2f}",
-            "Gain/Loss (%)": f"{((shipping_curr - shipping_prev)/shipping_prev)*100:+.2f}%" if shipping_prev else "-"
+            "Gain/Loss (%)": f"{((shipping_curr - shipping_prev)/shipping_prev)*100:+.2f}%" if shipping_prev != 0 else "-"
         },
         {
             "Metric": f"{quarter} Total Labor (Store + Shipping Payroll)",
@@ -424,8 +437,8 @@ with tab2:
     st.dataframe(df_t1, width="stretch", hide_index=True)
 
     st.markdown(f"### 2. INSIDE SALES PERFORMANCE (YOY)")
-    vape_diff = vape_curr - vape_prev
-    vape_pct = (vape_diff / vape_prev)*100 if vape_prev != 0 else 0.0
+    vape_diff = vape_deduction_curr - vape_deduction_prev
+    vape_pct = (vape_diff / vape_deduction_prev)*100 if vape_deduction_prev != 0 else 0.0
 
     t2_data = [
         {
@@ -437,20 +450,20 @@ with tab2:
         },
         {
             "Category": "Vape Sales Deductions",
-            f"{quarter} {year}": f"-\${vape_curr:,.2f}",
-            f"{quarter} {year-1}": f"-\${vape_prev:,.2f}",
+            f"{quarter} {year}": f"-\${vape_deduction_curr:,.2f}",
+            f"{quarter} {year-1}": f"-\${vape_deduction_prev:,.2f}",
             "Gain/Loss (\$)": f"-\${vape_diff:,.2f}",
-            "Gain/Loss (%)": f"{vape_pct:+.2f}%" if vape_prev != 0 else "-"
+            "Gain/Loss (%)": f"{vape_pct:+.2f}%" if vape_deduction_prev != 0 else "-"
         },
         {
             "Category": "Sunday Sales Deductions",
-            f"{quarter} {year}": f"-\${sunday_net_deduction:,.2f}",
+            f"{quarter} {year}": f"-\${sunday_deduction_to_use:,.2f}",
             f"{quarter} {year-1}": "\$0.00",
-            "Gain/Loss (\$)": f"-\${sunday_net_deduction:,.2f}" if sunday_net_deduction else "\$0.00",
+            "Gain/Loss (\$)": f"-\${sunday_deduction_to_use:,.2f}" if sunday_deduction_to_use else "\$0.00",
             "Gain/Loss (%)": "-"
         },
         {
-            "Category": "Total Net Inside Alcohol Sales",
+            "Category": "Total Net Inside Store Sales",
             f"{quarter} {year}": f"\${adjusted_inside_curr:,.2f}",
             f"{quarter} {year-1}": f"\${adjusted_inside_prev:,.2f}",
             "Gain/Loss (\$)": f"\${(adjusted_inside_curr - adjusted_inside_prev):+,.2f}",
