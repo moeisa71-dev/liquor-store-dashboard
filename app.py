@@ -4,6 +4,8 @@ import plotly.graph_objects as go
 import pypdf
 import re
 from datetime import datetime
+import io
+import requests
 
 st.set_page_config(page_title="Liquors Ventures Analytics", layout="wide")
 
@@ -68,13 +70,21 @@ def parse_sundays_from_pdf(pdf_file_or_path):
     df = pd.DataFrame(records).drop_duplicates(subset=['Date'])
     return df
 
-# 2. Ingest Live Data from Google Sheet
+# 2. Ingest Live Data from Google Sheet with Browser User-Agent
 SHEET_ID = "1NYSifzt4YDDZUkHviAD7bjBSFqbAJCR6vXBoXmHzIv0"
 CSV_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet=Weekly%20KPIs"
 
 @st.cache_data(ttl=300)
 def load_google_sheet_data():
-    df = pd.read_csv(CSV_URL, skiprows=2)
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
+    }
+    resp = requests.get(CSV_URL, headers=headers)
+    if resp.status_code != 200:
+        st.error(f"⚠️ Could not access Google Sheet (Status {resp.status_code}). Please make sure the sheet sharing is set to 'Anyone with the link can view'.")
+        st.stop()
+        
+    df = pd.read_csv(io.StringIO(resp.text), skiprows=2)
     df.columns = [str(c).strip() for c in df.columns]
     df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
     df = df.dropna(subset=['Date']).sort_values('Date').reset_index(drop=True)
