@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import plotly.graph_objects as go
 import pypdf
 import re
 from datetime import datetime
@@ -10,7 +9,7 @@ import requests
 
 st.set_page_config(page_title="Liquors Ventures Analytics", layout="wide")
 
-# Custom Styling (Dark theme & table styling matching your attachment)
+# Custom Styling (Dark theme & table styling)
 st.markdown("""
 <style>
     .header-box {
@@ -304,21 +303,12 @@ with tab1:
 
     st.divider()
 
-    # BONUS QUALIFICATION CARDS (Placed here!)
+    # BONUS QUALIFICATION CARDS
     st.subheader("🎯 Quarterly Bonus Qualification")
     b1, b2, b3 = st.columns(3)
     b1.metric("Store Sales Bonus", f"${sales_bonus:,.2f}", f"Core Growth: {pct_inside_change:+.2f}%")
     b2.metric("Labor Rate Bonus", f"${labor_bonus:,.2f}", f"Labor Rate: {labor_rate_curr:.2f}% (incl. Shipping)")
     b3.metric("Total Qualified Bonus", f"${total_bonus:,.2f}", "Combined Payout")
-
-    st.divider()
-
-    st.subheader("Quarterly Revenue & Channel Mix Progression")
-    fig = go.Figure()
-    fig.add_trace(go.Bar(name='Inside Store Sales', x=[f"{year-1} {quarter}", f"{year} {quarter}"], y=[gross_inside_prev, gross_inside_curr], marker_color='#4f46e5'))
-    fig.add_trace(go.Bar(name='Shipping Sales (E-Commerce)', x=[f"{year-1} {quarter}", f"{year} {quarter}"], y=[shipping_prev, shipping_curr], marker_color='#9333ea'))
-    fig.update_layout(barmode='stack', height=360, margin=dict(l=20, r=20, t=20, b=20), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-    st.plotly_chart(fig, use_container_width=True)
 
 # -------------------------------------------------------------
 # TAB 2: EXACT TABLES FROM 2ND ATTACHMENT + BONUS SUMMARY
