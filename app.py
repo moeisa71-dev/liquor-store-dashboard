@@ -24,10 +24,10 @@ st.markdown("""
 
 def safe_currency(val):
     if val is None or pd.isna(val) or val == '':
-        return "\$0.00"
+        return "$0.00"
     try:
-        val_f = float(str(val).replace('\$', '').replace(',', '').strip())
-        return f"\${val_f:,.2f}"
+        val_f = float(str(val).replace('$', '').replace(',', '').strip())
+        return f"${val_f:,.2f}"
     except Exception:
         return str(val)
 
@@ -83,7 +83,7 @@ def parse_sundays_from_pdf_bytes(pdf_bytes):
     return df
 
 # -------------------------------------------------------------
-# 2. Resilient Google Sheet / CSV Loader
+# 2. Resilient Google Sheet / CSV Loader (Using gid=0)
 # -------------------------------------------------------------
 SHEET_ID = "1NYSifzt4YDDZUkHviAD7bjBSFqbAJCR6vXBoXmHzIv0"
 URL_CANDIDATES = [
@@ -109,7 +109,6 @@ def parse_kpi_text(raw_text):
         return None, "Could not locate 'Date' header row in Google Sheet data."
         
     df = pd.read_csv(io.StringIO(raw_text), skiprows=header_idx)
-    # Strip whitespace from all column names immediately
     df.columns = [str(c).strip() for c in df.columns]
     
     if 'Date' not in df.columns:
@@ -118,17 +117,17 @@ def parse_kpi_text(raw_text):
     df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
     df = df.dropna(subset=['Date']).sort_values('Date').reset_index(drop=True)
     
-    # Strip \$, commas, and convert all numeric columns immediately
+    # Clean currency and numbers without regex issues
     for col in df.columns:
         if col != 'Date':
-            clean_s = (
+            clean_col_data = (
                 df[col]
                 .astype(str)
-                .str.replace('\$', '', regex=False)
+                .str.replace('$', '', regex=False)
                 .str.replace(',', '', regex=False)
                 .str.strip()
             )
-            df[col] = pd.to_numeric(clean_s, errors='coerce').fillna(0)
+            df[col] = pd.to_numeric(clean_col_data, errors='coerce').fillna(0.0)
             
     return df, None
 
@@ -169,10 +168,10 @@ if df_kpi is None:
 
 # Helper function to find and sum columns safely
 def get_col_sum(df, possible_names):
-    norm_targets = [n.lower().replace('\$', '').replace('\\', '').strip() for n in possible_names]
+    norm_targets = [n.lower().replace('\$', '').strip() for n in possible_names]
     for target in norm_targets:
         for col in df.columns:
-            c_norm = str(col).lower().replace('\$', '').replace('\\', '').strip()
+            c_norm = str(col).lower().replace('\$', '').strip()
             if c_norm == target:
                 return float(df[col].sum())
     return 0.0
@@ -283,10 +282,10 @@ else:
     adjusted_inside_curr = gross_inside_curr
     adjusted_inside_prev = gross_inside_prev
 
-pct_inside_change = ((adjusted_inside_curr - adjusted_inside_prev) / adjusted_inside_prev) * 100 if adjusted_inside_prev else 0
+pct_inside_change = ((adjusted_inside_curr - adjusted_inside_prev) / adjusted_inside_prev) * 100 if adjusted_inside_prev != 0 else 0.0
 
-labor_rate_curr = (total_labor_curr / total_sales_curr) * 100 if total_sales_curr else 0
-labor_rate_prev = (total_labor_prev / total_sales_prev) * 100 if total_sales_prev else 0
+labor_rate_curr = (total_labor_curr / total_sales_curr) * 100 if total_sales_curr != 0 else 0.0
+labor_rate_prev = (total_labor_prev / total_sales_prev) * 100 if total_sales_prev != 0 else 0.0
 
 # -------------------------------------------------------------
 # 6. Bonus Calculations Engine
@@ -338,15 +337,15 @@ with tab1:
     s2.metric("2. Vape Deductions", f"-\${vape_curr:,.2f}", "Category Launch: May '25")
     s3.metric("3. Sunday Deductions", f"-\${sunday_net_deduction:,.2f}", f"{len(df_sundays)} Sundays Detected")
     s4.metric("4. Adjusted Inside Alcohol", f"\${adjusted_inside_curr:,.2f}", "Mon-Sat Core Non-Vape")
-    s5.metric("5. Normalized YoY", f"{pct_inside_change:.2f}%", f"vs PY Baseline: \${adjusted_inside_prev:,.2f}")
+    s5.metric("5. Normalized YoY", f"{pct_inside_change:+.2f}%", f"vs PY Baseline: \${adjusted_inside_prev:,.2f}")
 
     st.divider()
 
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("TOTAL GROSS SALES", f"\${total_sales_curr:,.2f}", f"{((total_sales_curr - total_sales_prev)/total_sales_prev)*100:+.2f}% YoY" if total_sales_prev else "-")
+    k1.metric("TOTAL GROSS SALES", f"\${total_sales_curr:,.2f}", f"{((total_sales_curr - total_sales_prev)/total_sales_prev)*100:+.2f}% YoY" if total_sales_prev != 0 else "-")
     k2.metric("CORE ADJUSTED INSIDE", f"\${adjusted_inside_curr:,.2f}", f"{pct_inside_change:+.2f}% Core")
-    k3.metric("SHIPPING SALES (E-COMM)", f"\${shipping_curr:,.2f}", f"{((shipping_curr - shipping_prev)/shipping_prev)*100:+.2f}% YoY" if shipping_prev else "-")
-    k4.metric("TOTAL LABOR (STORE + SHIP)", f"\${total_labor_curr:,.2f}", f"{((total_labor_curr - total_labor_prev)/total_labor_prev)*100:+.2f}% YoY" if total_labor_prev else "-")
+    k3.metric("SHIPPING SALES (E-COMM)", f"\${shipping_curr:,.2f}", f"{((shipping_curr - shipping_prev)/shipping_prev)*100:+.2f}% YoY" if shipping_prev != 0 else "-")
+    k4.metric("TOTAL LABOR (STORE + SHIP)", f"\${total_labor_curr:,.2f}", f"{((total_labor_curr - total_labor_prev)/total_labor_prev)*100:+.2f}% YoY" if total_labor_prev != 0 else "-")
 
     k5, k6, k7, k8 = st.columns(4)
     k5.metric("TOTAL LABOR % OF SALES", f"{labor_rate_curr:.2f}%", f"PY: {labor_rate_prev:.2f}%")
@@ -369,7 +368,7 @@ with tab2:
     st.markdown(f"### 1. EXECUTIVE OVERVIEW ({quarter} {year} vs {quarter} {year-1})")
     
     labor_diff = total_labor_curr - total_labor_prev
-    labor_pct = (labor_diff / total_labor_prev)*100 if total_labor_prev else 0.0
+    labor_pct = (labor_diff / total_labor_prev)*100 if total_labor_prev != 0 else 0.0
 
     t1_data = [
         {
@@ -377,7 +376,7 @@ with tab2:
             f"{quarter} {year}": f"\${total_sales_curr:,.2f}",
             f"{quarter} {year-1}": f"\${total_sales_prev:,.2f}",
             "Gain/Loss (\$)": f"\${(total_sales_curr - total_sales_prev):+,.2f}",
-            "Gain/Loss (%)": f"{((total_sales_curr - total_sales_prev)/total_sales_prev)*100:+.2f}%" if total_sales_prev else "-"
+            "Gain/Loss (%)": f"{((total_sales_curr - total_sales_prev)/total_sales_prev)*100:+.2f}%" if total_sales_prev != 0 else "-"
         },
         {
             "Metric": "Net Inside Alcohol Sales",
@@ -398,7 +397,7 @@ with tab2:
             f"{quarter} {year}": f"\${total_labor_curr:,.2f}",
             f"{quarter} {year-1}": f"\${total_labor_prev:,.2f}",
             "Gain/Loss (\$)": f"\${labor_diff:+,.2f}",
-            "Gain/Loss (%)": f"{labor_pct:+.2f}%" if total_labor_prev else "-"
+            "Gain/Loss (%)": f"{labor_pct:+.2f}%" if total_labor_prev != 0 else "-"
         },
         {
             "Metric": "Labor Rate (Total Labor / Total Sales)",
@@ -416,11 +415,11 @@ with tab2:
         }
     ]
     df_t1 = pd.DataFrame(t1_data)
-    st.dataframe(df_t1, use_container_width=True, hide_index=True)
+    st.dataframe(df_t1, width="stretch", hide_index=True)
 
     st.markdown(f"### 2. INSIDE SALES PERFORMANCE (YOY)")
     vape_diff = vape_curr - vape_prev
-    vape_pct = (vape_diff / vape_prev)*100 if vape_prev else 0.0
+    vape_pct = (vape_diff / vape_prev)*100 if vape_prev != 0 else 0.0
 
     t2_data = [
         {
@@ -428,14 +427,14 @@ with tab2:
             f"{quarter} {year}": f"\${gross_inside_curr:,.2f}",
             f"{quarter} {year-1}": f"\${gross_inside_prev:,.2f}",
             "Gain/Loss (\$)": f"\${(gross_inside_curr - gross_inside_prev):+,.2f}",
-            "Gain/Loss (%)": f"{((gross_inside_curr - gross_inside_prev)/gross_inside_prev)*100:+.2f}%" if gross_inside_prev else "-"
+            "Gain/Loss (%)": f"{((gross_inside_curr - gross_inside_prev)/gross_inside_prev)*100:+.2f}%" if gross_inside_prev != 0 else "-"
         },
         {
             "Category": "Vape Sales Deductions",
             f"{quarter} {year}": f"-\${vape_curr:,.2f}",
             f"{quarter} {year-1}": f"-\${vape_prev:,.2f}",
             "Gain/Loss (\$)": f"-\${vape_diff:,.2f}",
-            "Gain/Loss (%)": f"{vape_pct:+.2f}%" if vape_prev else "-"
+            "Gain/Loss (%)": f"{vape_pct:+.2f}%" if vape_prev != 0 else "-"
         },
         {
             "Category": "Sunday Sales Deductions",
@@ -453,7 +452,7 @@ with tab2:
         }
     ]
     df_t2 = pd.DataFrame(t2_data)
-    st.dataframe(df_t2, use_container_width=True, hide_index=True)
+    st.dataframe(df_t2, width="stretch", hide_index=True)
 
     st.markdown(f"### 3. {quarter} {year} SUNDAY SALES DEEP DIVE")
     if not df_sundays.empty:
@@ -467,7 +466,7 @@ with tab2:
         df_display_sun = pd.concat([df_display_sun, total_row], ignore_index=True)
         for col in ["Gross_Total", "Vape_Sales", "Net_Alcohol"]:
             df_display_sun[col] = df_display_sun[col].apply(safe_currency)
-        st.dataframe(df_display_sun, use_container_width=True, hide_index=True)
+        st.dataframe(df_display_sun, width="stretch", hide_index=True)
     else:
         st.info(f"Drop `{year}_{quarter}.pdf` into your repository or the sidebar to populate the 13-week Sunday table!")
 
@@ -479,7 +478,7 @@ with tab3:
     
     col_a, col_b = st.columns(2)
     numeric_display = [
-        'Weekly Inside sales w/o lottery', 'Total Shipping Sales', 'Total Weekly Sales with out Lottery', 
+        inside_names[0], 'Total Shipping Sales', 'Total Weekly Sales with out Lottery', 
         'VAPE SALES', 'Store Payroll 100hrs \$2100', 'Shipping Payroll', 'Total Labor Under'
     ]
     
@@ -499,7 +498,7 @@ with tab3:
             if col in df_c.columns:
                 df_c[col] = df_c[col].apply(safe_currency)
                 
-        st.dataframe(df_c, use_container_width=True, hide_index=True)
+        st.dataframe(df_c, width="stretch", hide_index=True)
         
     with col_b:
         st.markdown(f"#### {quarter} {year-1} Weekly Line Items")
@@ -517,4 +516,4 @@ with tab3:
             if col in df_p.columns:
                 df_p[col] = df_p[col].apply(safe_currency)
                 
-        st.dataframe(df_p, use_container_width=True, hide_index=True)
+        st.dataframe(df_p, width="stretch", hide_index=True)
