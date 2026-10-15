@@ -10,7 +10,7 @@ import requests
 
 st.set_page_config(page_title="Liquors Ventures Analytics", layout="wide")
 
-# Custom header styling
+# Custom Styling (Dark theme & table styling matching your attachment)
 st.markdown("""
 <style>
     .header-box {
@@ -20,11 +20,19 @@ st.markdown("""
         border-radius: 14px;
         margin-bottom: 20px;
     }
+    .table-header {
+        background-color: #2F4F4F;
+        color: white;
+        font-weight: bold;
+        padding: 8px 12px;
+        border-radius: 6px 6px 0 0;
+        margin-top: 15px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 # -------------------------------------------------------------
-# 1. Automatic PDF Parsing Engine (Pulls Sundays from raw POS PDF)
+# 1. Automatic PDF Parsing Engine (Pulls Sundays from POS PDF)
 # -------------------------------------------------------------
 def parse_sundays_from_pdf(pdf_file_or_path):
     reader = pypdf.PdfReader(pdf_file_or_path)
@@ -64,7 +72,7 @@ def parse_sundays_from_pdf(pdf_file_or_path):
                         total_val = float(nums[0].replace(',', ''))
                 
                 records.append({
-                    'Date': dt.strftime('%m/%d/%Y'),
+                    'Date': dt.strftime('%B %d, %Y'),
                     'Gross_Total': total_val,
                     'Vape_Sales': vape_val,
                     'Net_Alcohol': total_val - vape_val
@@ -97,7 +105,7 @@ def parse_kpi_text(raw_text):
             break
             
     if header_idx is None:
-        return None, "Could not locate 'Date' header row in the Google Sheet data."
+        return None, "Could not locate 'Date' header row in Google Sheet data."
         
     df = pd.read_csv(io.StringIO(raw_text), skiprows=header_idx)
     df.columns = [str(c).strip() for c in df.columns]
@@ -110,7 +118,8 @@ def parse_kpi_text(raw_text):
     
     numeric_cols = [
         'INSIDE SALES', 'Total Shipping Sales', 'Store Payroll 100hrs $2100', 
-        'VAPE SALES', 'INSIDE TRANS COUNT'
+        'VAPE SALES', 'INSIDE TRANS COUNT', 'Flaviar Sales', 'Shipstation Sales',
+        'Flaviar Parcels', 'Shipstation parcels', 'Total Parcels'
     ]
     for col in numeric_cols:
         if col in df.columns:
@@ -133,7 +142,6 @@ def fetch_online_kpis():
             continue
     return None, "Could not connect to Google Sheet via export endpoints."
 
-# Sidebar data loading
 st.sidebar.header("⚙️ Data Settings")
 csv_text, err_msg = fetch_online_kpis()
 df_kpi = None
@@ -143,7 +151,6 @@ if csv_text:
     if parse_err:
         st.sidebar.warning(parse_err)
 
-# Backup manual upload
 manual_kpi = st.sidebar.file_uploader("Upload Weekly KPIs CSV (Backup)", type=["csv"])
 if manual_kpi is not None:
     manual_text = manual_kpi.getvalue().decode('utf-8', errors='ignore')
@@ -153,14 +160,7 @@ if manual_kpi is not None:
         st.sidebar.success("Loaded Weekly KPIs from uploaded file!")
 
 if df_kpi is None:
-    st.error("""
-    ### ⚠️ Cannot Access Google Sheet Data
-    Google's automated export was blocked or returned unexpected data.
-    
-    **Immediate Fix:**
-    1. In your Google Sheet, click **File** > **Download** > **Comma Separated Values (.csv)**.
-    2. Click **Upload** under **Upload Weekly KPIs CSV (Backup)** in the left sidebar.
-    """)
+    st.error("Cannot access Google Sheet. Please check link permissions or upload a backup CSV.")
     st.stop()
 
 # -------------------------------------------------------------
@@ -209,11 +209,11 @@ start_m, end_m = quarter_map[quarter]
 
 df_curr = df_kpi[(df_kpi['Date'].dt.year == year) & 
                  (df_kpi['Date'].dt.month >= start_m) & 
-                 (df_kpi['Date'].dt.month <= end_m)].tail(13)
+                 (df_kpi['Date'].dt.month <= end_m)].tail(13).copy()
 
 df_prev = df_kpi[(df_kpi['Date'].dt.year == (year - 1)) & 
                  (df_kpi['Date'].dt.month >= start_m) & 
-                 (df_kpi['Date'].dt.month <= end_m)].tail(13)
+                 (df_kpi['Date'].dt.month <= end_m)].tail(13).copy()
 
 gross_inside_curr = df_curr['INSIDE SALES'].sum()
 shipping_curr = df_curr['Total Shipping Sales'].sum()
@@ -235,53 +235,183 @@ else:
     adjusted_inside_prev = gross_inside_prev
 
 pct_inside_change = ((adjusted_inside_curr - adjusted_inside_prev) / adjusted_inside_prev) * 100 if adjusted_inside_prev else 0
-labor_rate = (payroll_curr / total_sales_curr) * 100 if total_sales_curr else 0
+labor_rate_curr = (payroll_curr / total_sales_curr) * 100 if total_sales_curr else 0
+labor_rate_prev = (payroll_prev / total_sales_prev) * 100 if total_sales_prev else 0
 
 # -------------------------------------------------------------
-# 6. Render Scorecard
+# 6. Render Tabs
 # -------------------------------------------------------------
-st.subheader("Apples-to-Apples Normalization Scorecard")
-s1, s2, s3, s4, s5 = st.columns(5)
-s1.metric("1. Gross Inside Sales", f"${gross_inside_curr:,.2f}", "All Register Inside")
-s2.metric("2. Vape Deductions", f"-${vape_curr:,.2f}", "Category Launch: May '25")
-s3.metric("3. Sunday Deductions", f"-${sunday_net_deduction:,.2f}", f"{len(df_sundays)} Sundays Detected")
-s4.metric("4. Adjusted Inside Alcohol", f"${adjusted_inside_curr:,.2f}", "Mon-Sat Core Non-Vape")
-s5.metric("5. Normalized YoY", f"{pct_inside_change:.2f}%", f"vs PY Baseline: ${adjusted_inside_prev:,.2f}")
-
-st.divider()
+tab1, tab2, tab3 = st.tabs([
+    "📊 Executive Dashboard", 
+    f"📋 YoY Executive Tables ({quarter} {year} vs {quarter} {year-1})", 
+    "📈 Weekly Sales Data Breakdown"
+])
 
 # -------------------------------------------------------------
-# 7. Render 8 KPI Cards
+# TAB 1: VISUAL EXECUTIVE DASHBOARD
 # -------------------------------------------------------------
-k1, k2, k3, k4 = st.columns(4)
-k1.metric("TOTAL GROSS SALES", f"${total_sales_curr:,.2f}", f"{((total_sales_curr - total_sales_prev)/total_sales_prev)*100:+.2f}% YoY" if total_sales_prev else "-")
-k2.metric("CORE ADJUSTED INSIDE", f"${adjusted_inside_curr:,.2f}", f"{pct_inside_change:+.2f}% Core")
-k3.metric("SHIPPING SALES (E-COMM)", f"${shipping_curr:,.2f}", f"{((shipping_curr - shipping_prev)/shipping_prev)*100:+.2f}% YoY" if shipping_prev else "-")
-k4.metric("TOTAL STORE PAYROLL", f"${payroll_curr:,.2f}", f"{((payroll_curr - payroll_prev)/payroll_prev)*100:+.2f}% YoY" if payroll_prev else "-")
+with tab1:
+    st.subheader("Apples-to-Apples Normalization Scorecard")
+    s1, s2, s3, s4, s5 = st.columns(5)
+    s1.metric("1. Gross Inside Sales", f"${gross_inside_curr:,.2f}", "All Register Inside")
+    s2.metric("2. Vape Deductions", f"-${vape_curr:,.2f}", "Category Launch: May '25")
+    s3.metric("3. Sunday Deductions", f"-${sunday_net_deduction:,.2f}", f"{len(df_sundays)} Sundays Detected")
+    s4.metric("4. Adjusted Inside Alcohol", f"${adjusted_inside_curr:,.2f}", "Mon-Sat Core Non-Vape")
+    s5.metric("5. Normalized YoY", f"{pct_inside_change:.2f}%", f"vs PY Baseline: ${adjusted_inside_prev:,.2f}")
 
-k5, k6, k7, k8 = st.columns(4)
-k5.metric("LABOR % OF SALES", f"{labor_rate:.2f}%", f"PY: {(payroll_prev/total_sales_prev)*100:.2f}%" if total_sales_prev else "-")
-k6.metric("STORE TRANSACTIONS", f"{int(df_curr['INSIDE TRANS COUNT'].sum()):,}", f"Avg Ticket: ${gross_inside_curr / max(1, df_curr['INSIDE TRANS COUNT'].sum()):.2f}")
-k7.metric("SUNDAY REVENUE EXTRACTED", f"${sunday_gross:,.2f}", f"Net Impact: -${sunday_net_deduction:,.2f}")
-k8.metric("TOTAL PARCELS SHIPPED", f"{int(df_curr['Total Shipping Sales'].count() * 115):,}")
+    st.divider()
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("TOTAL GROSS SALES", f"${total_sales_curr:,.2f}", f"{((total_sales_curr - total_sales_prev)/total_sales_prev)*100:+.2f}% YoY" if total_sales_prev else "-")
+    k2.metric("CORE ADJUSTED INSIDE", f"${adjusted_inside_curr:,.2f}", f"{pct_inside_change:+.2f}% Core")
+    k3.metric("SHIPPING SALES (E-COMM)", f"${shipping_curr:,.2f}", f"{((shipping_curr - shipping_prev)/shipping_prev)*100:+.2f}% YoY" if shipping_prev else "-")
+    k4.metric("TOTAL STORE PAYROLL", f"${payroll_curr:,.2f}", f"{((payroll_curr - payroll_prev)/payroll_prev)*100:+.2f}% YoY" if payroll_prev else "-")
+
+    k5, k6, k7, k8 = st.columns(4)
+    k5.metric("LABOR % OF SALES", f"{labor_rate_curr:.2f}%", f"PY: {labor_rate_prev:.2f}%")
+    k6.metric("STORE TRANSACTIONS", f"{int(df_curr['INSIDE TRANS COUNT'].sum()):,}", f"Avg Ticket: ${gross_inside_curr / max(1, df_curr['INSIDE TRANS COUNT'].sum()):.2f}")
+    k7.metric("SUNDAY REVENUE EXTRACTED", f"${sunday_gross:,.2f}", f"Net Impact: -${sunday_net_deduction:,.2f}")
+    k8.metric("TOTAL PARCELS SHIPPED", f"{int(df_curr['Total Parcels'].sum() if 'Total Parcels' in df_curr.columns else len(df_curr)*115):,}")
+
+    st.subheader("Quarterly Revenue & Channel Mix Progression")
+    fig = go.Figure()
+    fig.add_trace(go.Bar(name='Inside Store Sales', x=[f"{year-1} {quarter}", f"{year} {quarter}"], y=[gross_inside_prev, gross_inside_curr], marker_color='#4f46e5'))
+    fig.add_trace(go.Bar(name='Shipping Sales (E-Commerce)', x=[f"{year-1} {quarter}", f"{year} {quarter}"], y=[shipping_prev, shipping_curr], marker_color='#9333ea'))
+    fig.update_layout(barmode='stack', height=360, margin=dict(l=20, r=20, t=20, b=20), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+    st.plotly_chart(fig, use_container_width=True)
 
 # -------------------------------------------------------------
-# 8. Revenue & Channel Mix Progression Bar Chart
+# TAB 2: EXACT TABLES FROM 2ND ATTACHMENT
 # -------------------------------------------------------------
-st.subheader("Quarterly Revenue & Channel Mix Progression")
-fig = go.Figure()
-fig.add_trace(go.Bar(name='Inside Store Sales', x=[f"{year-1} {quarter}", f"{year} {quarter}"], y=[gross_inside_prev, gross_inside_curr], marker_color='#4f46e5'))
-fig.add_trace(go.Bar(name='Shipping Sales (E-Commerce)', x=[f"{year-1} {quarter}", f"{year} {quarter}"], y=[shipping_prev, shipping_curr], marker_color='#9333ea'))
-fig.update_layout(barmode='stack', height=360, margin=dict(l=20, r=20, t=20, b=20), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-st.plotly_chart(fig, use_container_width=True)
+with tab2:
+    st.markdown(f"### 1. EXECUTIVE OVERVIEW ({quarter} {year} vs {quarter} {year-1})")
+    
+    t1_data = [
+        {
+            "Metric": f"Total {quarter} Sales",
+            f"{quarter} {year}": f"${total_sales_curr:,.2f}",
+            f"{quarter} {year-1}": f"${total_sales_prev:,.2f}",
+            "Gain/Loss ($)": f"${(total_sales_curr - total_sales_prev):+,.2f}",
+            "Gain/Loss (%)": f"{((total_sales_curr - total_sales_prev)/total_sales_prev)*100:+.2f}%" if total_sales_prev else "-"
+        },
+        {
+            "Metric": "Net Inside Alcohol Sales",
+            f"{quarter} {year}": f"${adjusted_inside_curr:,.2f}",
+            f"{quarter} {year-1}": f"${adjusted_inside_prev:,.2f}",
+            "Gain/Loss ($)": f"${(adjusted_inside_curr - adjusted_inside_prev):+,.2f}",
+            "Gain/Loss (%)": f"{pct_inside_change:+.2f}%"
+        },
+        {
+            "Metric": "Shipping Revenue",
+            f"{quarter} {year}": f"${shipping_curr:,.2f}",
+            f"{quarter} {year-1}": f"${shipping_prev:,.2f}",
+            "Gain/Loss ($)": f"${(shipping_curr - shipping_prev):+,.2f}",
+            "Gain/Loss (%)": f"{((shipping_curr - shipping_prev)/shipping_prev)*100:+.2f}%" if shipping_prev else "-"
+        },
+        {
+            "Metric": f"{quarter} Store Payroll",
+            f"{quarter} {year}": f"${payroll_curr:,.2f}",
+            f"{quarter} {year-1}": f"${payroll_prev:,.2f}",
+            "Gain/Loss ($)": f"${(payroll_curr - payroll_prev):+,.2f}",
+            "Gain/Loss (%)": f"{((payroll_curr - payroll_prev)/payroll_prev)*100:+.2f}%" if payroll_prev else "-"
+        },
+        {
+            "Metric": "Labor Rate",
+            f"{quarter} {year}": f"{labor_rate_curr:.2f}%",
+            f"{quarter} {year-1}": f"{labor_rate_prev:.2f}%",
+            "Gain/Loss ($)": f"{(labor_rate_curr - labor_rate_prev):+.2f}% pts",
+            "Gain/Loss (%)": ""
+        }
+    ]
+    df_t1 = pd.DataFrame(t1_data)
+    st.dataframe(df_t1, use_container_width=True, hide_index=True)
 
-# -------------------------------------------------------------
-# 9. Audit Table for Sundays
-# -------------------------------------------------------------
-if not df_sundays.empty:
-    with st.expander("🔍 View Extracted Sunday Audit Table"):
-        st.dataframe(df_sundays.style.format({
+    st.markdown(f"### 2. INSIDE SALES PERFORMANCE (YOY)")
+    vape_diff = vape_curr - vape_prev
+    vape_pct = (vape_diff / vape_prev)*100 if vape_prev else 0.0
+
+    t2_data = [
+        {
+            "Category": "Inside Sales (Gross)",
+            f"{quarter} {year}": f"${gross_inside_curr:,.2f}",
+            f"{quarter} {year-1}": f"${gross_inside_prev:,.2f}",
+            "Gain/Loss ($)": f"${(gross_inside_curr - gross_inside_prev):+,.2f}",
+            "Gain/Loss (%)": f"{((gross_inside_curr - gross_inside_prev)/gross_inside_prev)*100:+.2f}%"
+        },
+        {
+            "Category": "Vape Sales Deductions",
+            f"{quarter} {year}": f"-${vape_curr:,.2f}",
+            f"{quarter} {year-1}": f"-${vape_prev:,.2f}",
+            "Gain/Loss ($)": f"-${vape_diff:,.2f}",
+            "Gain/Loss (%)": f"{vape_pct:+.2f}%"
+        },
+        {
+            "Category": "Sunday Sales Deductions",
+            f"{quarter} {year}": f"-${sunday_net_deduction:,.2f}",
+            f"{quarter} {year-1}": "$0.00",
+            "Gain/Loss ($)": f"-${sunday_net_deduction:,.2f}" if sunday_net_deduction else "$0.00",
+            "Gain/Loss (%)": "-"
+        },
+        {
+            "Category": "Total Net Inside Alcohol Sales",
+            f"{quarter} {year}": f"${adjusted_inside_curr:,.2f}",
+            f"{quarter} {year-1}": f"${adjusted_inside_prev:,.2f}",
+            "Gain/Loss ($)": f"${(adjusted_inside_curr - adjusted_inside_prev):+,.2f}",
+            "Gain/Loss (%)": f"{pct_inside_change:+.2f}%"
+        }
+    ]
+    df_t2 = pd.DataFrame(t2_data)
+    st.dataframe(df_t2, use_container_width=True, hide_index=True)
+
+    st.markdown(f"### 3. {quarter} {year} SUNDAY SALES DEEP DIVE")
+    if not df_sundays.empty:
+        df_display_sun = df_sundays.copy()
+        total_row = pd.DataFrame([{
+            "Date": "TOTAL",
+            "Gross_Total": df_sundays['Gross_Total'].sum(),
+            "Vape_Sales": df_sundays['Vape_Sales'].sum(),
+            "Net_Alcohol": df_sundays['Net_Alcohol'].sum()
+        }])
+        df_display_sun = pd.concat([df_display_sun, total_row], ignore_index=True)
+        st.dataframe(df_display_sun.style.format({
             "Gross_Total": "${:,.2f}",
             "Vape_Sales": "${:,.2f}",
             "Net_Alcohol": "${:,.2f}"
-        }), use_container_width=True)
+        }), use_container_width=True, hide_index=True)
+    else:
+        st.info("ℹ️ Drop your Daily POS PDF into the left sidebar to automatically generate the 13-week Sunday Deep Dive table!")
+
+# -------------------------------------------------------------
+# TAB 3: WEEKLY SALES DATA BREAKDOWN
+# -------------------------------------------------------------
+with tab3:
+    st.markdown(f"### 13-Week Data Points from Weekly KPIs ({year} vs {year-1})")
+    
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.markdown(f"#### {quarter} {year} Weekly Line Items")
+        show_cols_curr = [c for c in ['Date', 'INSIDE SALES', 'VAPE SALES', 'Total Shipping Sales', 'Flaviar Sales', 'Shipstation Sales', 'Store Payroll 100hrs $2100'] if c in df_curr.columns]
+        df_c_show = df_curr[show_cols_curr].copy()
+        df_c_show['Date'] = df_c_show['Date'].dt.strftime('%Y-%m-%d')
+        st.dataframe(df_c_show.style.format({
+            'INSIDE SALES': "${:,.2f}",
+            'VAPE SALES': "${:,.2f}",
+            'Total Shipping Sales': "${:,.2f}",
+            'Flaviar Sales': "${:,.2f}",
+            'Shipstation Sales': "${:,.2f}",
+            'Store Payroll 100hrs $2100': "${:,.2f}"
+        }), use_container_width=True, hide_index=True)
+        
+    with col_b:
+        st.markdown(f"#### {quarter} {year-1} Weekly Line Items")
+        show_cols_prev = [c for c in ['Date', 'INSIDE SALES', 'VAPE SALES', 'Total Shipping Sales', 'Flaviar Sales', 'Shipstation Sales', 'Store Payroll 100hrs $2100'] if c in df_prev.columns]
+        df_p_show = df_prev[show_cols_prev].copy()
+        df_p_show['Date'] = df_p_show['Date'].dt.strftime('%Y-%m-%d')
+        st.dataframe(df_p_show.style.format({
+            'INSIDE SALES': "${:,.2f}",
+            'VAPE SALES': "${:,.2f}",
+            'Total Shipping Sales': "${:,.2f}",
+            'Flaviar Sales': "${:,.2f}",
+            'Shipstation Sales': "${:,.2f}",
+            'Store Payroll 100hrs $2100': "${:,.2f}"
+        }), use_container_width=True, hide_index=True)
