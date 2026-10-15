@@ -24,7 +24,7 @@ st.markdown("""
 
 def safe_currency(val):
     if val is None or pd.isna(val) or val == '':
-        return "$0.00"
+        return "\$0.00"
     try:
         val_f = float(str(val).replace('\$', '').replace(',', '').strip())
         return f"\${val_f:,.2f}"
@@ -83,7 +83,7 @@ def parse_sundays_from_pdf_bytes(pdf_bytes):
     return df
 
 # -------------------------------------------------------------
-# 2. Resilient Google Sheet / CSV Loader (Using gid=0)
+# 2. Resilient Google Sheet / CSV Loader
 # -------------------------------------------------------------
 SHEET_ID = "1NYSifzt4YDDZUkHviAD7bjBSFqbAJCR6vXBoXmHzIv0"
 URL_CANDIDATES = [
@@ -118,17 +118,17 @@ def parse_kpi_text(raw_text):
     df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
     df = df.dropna(subset=['Date']).sort_values('Date').reset_index(drop=True)
     
-    # Clean every numeric column immediately upon loading
+    # Strip \$, commas, and convert all numeric columns immediately
     for col in df.columns:
         if col != 'Date':
-            cleaned_s = (
+            clean_s = (
                 df[col]
                 .astype(str)
                 .str.replace('\$', '', regex=False)
                 .str.replace(',', '', regex=False)
                 .str.strip()
             )
-            df[col] = pd.to_numeric(cleaned_s, errors='coerce').fillna(0)
+            df[col] = pd.to_numeric(clean_s, errors='coerce').fillna(0)
             
     return df, None
 
@@ -167,7 +167,7 @@ if df_kpi is None:
     st.error("Cannot access Google Sheet. Please check link permissions or upload a backup CSV.")
     st.stop()
 
-# Robust column sum finder: handles trailing spaces, \$, and capitalization
+# Helper function to find and sum columns safely
 def get_col_sum(df, possible_names):
     norm_targets = [n.lower().replace('\$', '').replace('\\', '').strip() for n in possible_names]
     for target in norm_targets:
@@ -248,7 +248,6 @@ df_prev = df_kpi[(df_kpi['Date'].dt.year == (year - 1)) &
                  (df_kpi['Date'].dt.month >= start_m) & 
                  (df_kpi['Date'].dt.month <= end_m)].tail(13).copy()
 
-# Pull exact inside sales w/o lottery first
 inside_names = ['Weekly Inside sales w/o lottery', 'INSIDE SALES']
 gross_inside_curr = get_col_sum(df_curr, inside_names)
 gross_inside_prev = get_col_sum(df_prev, inside_names)
@@ -429,14 +428,14 @@ with tab2:
             f"{quarter} {year}": f"\${gross_inside_curr:,.2f}",
             f"{quarter} {year-1}": f"\${gross_inside_prev:,.2f}",
             "Gain/Loss (\$)": f"\${(gross_inside_curr - gross_inside_prev):+,.2f}",
-            "Gain/Loss (%)": f"{((gross_inside_curr - gross_inside_prev)/gross_inside_prev)*100:+.2f}%"
+            "Gain/Loss (%)": f"{((gross_inside_curr - gross_inside_prev)/gross_inside_prev)*100:+.2f}%" if gross_inside_prev else "-"
         },
         {
             "Category": "Vape Sales Deductions",
             f"{quarter} {year}": f"-\${vape_curr:,.2f}",
             f"{quarter} {year-1}": f"-\${vape_prev:,.2f}",
             "Gain/Loss (\$)": f"-\${vape_diff:,.2f}",
-            "Gain/Loss (%)": f"{vape_pct:+.2f}%"
+            "Gain/Loss (%)": f"{vape_pct:+.2f}%" if vape_prev else "-"
         },
         {
             "Category": "Sunday Sales Deductions",
@@ -480,7 +479,7 @@ with tab3:
     
     col_a, col_b = st.columns(2)
     numeric_display = [
-        inside_col, 'Total Shipping Sales', 'Total Weekly Sales with out Lottery', 
+        'Weekly Inside sales w/o lottery', 'Total Shipping Sales', 'Total Weekly Sales with out Lottery', 
         'VAPE SALES', 'Store Payroll 100hrs \$2100', 'Shipping Payroll', 'Total Labor Under'
     ]
     
