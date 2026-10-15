@@ -10,7 +10,6 @@ import os
 
 st.set_page_config(page_title="Liquors Ventures Analytics", layout="wide")
 
-# Custom Styling (Dark theme & table styling)
 st.markdown("""
 <style>
     .header-box {
@@ -23,7 +22,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Helper function to safely format dollar values without crashing
 def safe_currency(val):
     if val is None or pd.isna(val) or val == '':
         return "\$0.00"
@@ -34,7 +32,7 @@ def safe_currency(val):
         return str(val)
 
 # -------------------------------------------------------------
-# 1. Automatic PDF Parsing Engine (Pulls Sundays from POS PDF)
+# 1. Automatic PDF Parsing Engine
 # -------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def parse_sundays_from_pdf_bytes(pdf_bytes):
@@ -57,7 +55,6 @@ def parse_sundays_from_pdf_bytes(pdf_bytes):
             except Exception:
                 continue
             
-            # Python weekday 6 = Sunday
             if dt.weekday() == 6:
                 vape_val = 0.0
                 vape_match = re.search(r'VAPE\s*[:\|]?\s*\$?\s*([0-9,]+\.\d{2})', text)
@@ -68,7 +65,7 @@ def parse_sundays_from_pdf_bytes(pdf_bytes):
                 tender_split = text.split('Tender Collected')
                 if len(tender_split) > 1:
                     above_tender = tender_split[0].strip()
-                    lines = above_tender.split('\n')
+                    lines = above_tender.splitlines()
                     last_line = lines[-1]
                     nums = re.findall(r'\$([0-9,]+\.\d{2})', last_line)
                     if nums:
@@ -85,7 +82,7 @@ def parse_sundays_from_pdf_bytes(pdf_bytes):
     return df
 
 # -------------------------------------------------------------
-# 2. Resilient Google Sheet / CSV Loader (Using gid=0)
+# 2. Resilient Google Sheet / CSV Loader
 # -------------------------------------------------------------
 SHEET_ID = "1NYSifzt4YDDZUkHviAD7bjBSFqbAJCR6vXBoXmHzIv0"
 URL_CANDIDATES = [
@@ -98,7 +95,7 @@ def parse_kpi_text(raw_text):
     if "<!DOCTYPE html>" in raw_text or "<html" in raw_text.lower():
         return None, "Google returned an HTML login page instead of spreadsheet data."
     
-    lines = raw_text.strip().split('\n')
+    lines = raw_text.strip().splitlines()
     header_idx = None
     for idx, line in enumerate(lines[:20]):
         row = list(csv.reader([line]))[0] if line else []
@@ -155,33 +152,15 @@ if df_kpi is None:
     st.error("Cannot access Google Sheet. Please check link permissions or upload a backup CSV.")
     st.stop()
 
-# Helper function that strips \$, commas, and whitespace before summing
+# Robust column matching that strips trailing spaces and dollar signs
 def get_col_sum(df, possible_names):
-    matched_col = None
-    for name in possible_names:
-        if name in df.columns:
-            matched_col = name
-            break
-    if matched_col is None:
+    norm_targets = [n.lower().replace('\$', '').replace('\\', '').strip() for n in possible_names]
+    for target in norm_targets:
         for col in df.columns:
-            for name in possible_names:
-                c_clean = col.lower().replace('\\', '').replace('\$', '').strip()
-                n_clean = name.lower().replace('\\', '').replace('\$', '').strip()
-                if c_clean == n_clean:
-                    matched_col = col
-                    break
-            if matched_col:
-                break
-                
-    if matched_col is not None:
-        cleaned_series = (
-            df[matched_col]
-            .astype(str)
-            .str.replace('\$', '', regex=False)
-            .str.replace(',', '', regex=False)
-            .str.strip()
-        )
-        return pd.to_numeric(cleaned_series, errors='coerce').fillna(0).sum()
+            c_norm = str(col).lower().replace('\$', '').replace('\\', '').strip()
+            if c_norm == target:
+                series = df[col].astype(str).str.replace('\$', '', regex=False).str.replace(',', '', regex=False).str.strip()
+                return pd.to_numeric(series, errors='coerce').fillna(0).sum()
     return 0.0
 
 # -------------------------------------------------------------
@@ -216,7 +195,9 @@ df_sundays = pd.DataFrame()
 possible_pdf_paths = [
     f"pdf_archive/{year}_{quarter}.pdf",
     f"sundays/{year}_{quarter}.pdf",
-    f"{year}_{quarter}.pdf"
+    f"{year}_{quarter}.pdf",
+    f"{year}_{quarter.lower()}.pdf",
+    f"pdf_archive/{year}_{quarter.lower()}.pdf"
 ]
 
 found_archived_file = None
@@ -234,13 +215,6 @@ elif found_archived_file is not None:
         file_bytes = f.read()
     df_sundays = parse_sundays_from_pdf_bytes(file_bytes)
     st.sidebar.info(f"📂 Auto-loaded permanent archive: `{found_archived_file}` ({len(df_sundays)} Sundays)")
-else:
-    possible_csv_paths = [f"sundays/{year}_{quarter}.csv", f"{year}_{quarter}.csv"]
-    for cp in possible_csv_paths:
-        if os.path.exists(cp):
-            df_sundays = pd.read_csv(cp)
-            st.sidebar.info(f"Loaded cached Sundays from `{cp}`")
-            break
 
 sunday_gross = df_sundays['Gross_Total'].sum() if not df_sundays.empty else 0.0
 sunday_vape = df_sundays['Vape_Sales'].sum() if not df_sundays.empty else 0.0
@@ -260,10 +234,8 @@ df_prev = df_kpi[(df_kpi['Date'].dt.year == (year - 1)) &
                  (df_kpi['Date'].dt.month >= start_m) & 
                  (df_kpi['Date'].dt.month <= end_m)].tail(13).copy()
 
-# Robust Column Pulls
-inside_names = ['Weekly Inside sales w/o lottery', 'INSIDE SALES']
-gross_inside_curr = get_col_sum(df_curr, inside_names)
-gross_inside_prev = get_col_sum(df_prev, inside_names)
+gross_inside_curr = get_col_sum(df_curr, ['Weekly Inside sales w/o lottery', 'INSIDE SALES'])
+gross_inside_prev = get_col_sum(df_prev, ['Weekly Inside sales w/o lottery', 'INSIDE SALES'])
 
 shipping_curr = get_col_sum(df_curr, ['Total Shipping Sales'])
 shipping_prev = get_col_sum(df_prev, ['Total Shipping Sales'])
@@ -298,12 +270,11 @@ else:
 
 pct_inside_change = ((adjusted_inside_curr - adjusted_inside_prev) / adjusted_inside_prev) * 100 if adjusted_inside_prev else 0
 
-# Total Labor Rate (Total Labor / Total Sales including Sundays and Vape)
 labor_rate_curr = (total_labor_curr / total_sales_curr) * 100 if total_sales_curr else 0
 labor_rate_prev = (total_labor_prev / total_sales_prev) * 100 if total_sales_prev else 0
 
 # -------------------------------------------------------------
-# 6. Bonus Calculations Engine (Using Total Labor Rate)
+# 6. Bonus Calculations Engine
 # -------------------------------------------------------------
 def get_sales_bonus(growth):
     if growth >= 25.0:
@@ -356,7 +327,6 @@ with tab1:
 
     st.divider()
 
-    # 8 KPI Cards
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("TOTAL GROSS SALES", f"\${total_sales_curr:,.2f}", f"{((total_sales_curr - total_sales_prev)/total_sales_prev)*100:+.2f}% YoY" if total_sales_prev else "-")
     k2.metric("CORE ADJUSTED INSIDE", f"\${adjusted_inside_curr:,.2f}", f"{pct_inside_change:+.2f}% Core")
@@ -371,7 +341,6 @@ with tab1:
 
     st.divider()
 
-    # BONUS QUALIFICATION CARDS
     st.subheader("🎯 Quarterly Bonus Qualification")
     b1, b2, b3 = st.columns(3)
     b1.metric("Store Sales Bonus", f"\${sales_bonus:,.2f}", f"Core Growth: {pct_inside_change:+.2f}%")
@@ -379,7 +348,7 @@ with tab1:
     b3.metric("Total Qualified Bonus", f"\${total_bonus:,.2f}", "Combined Payout")
 
 # -------------------------------------------------------------
-# TAB 2: EXACT TABLES FROM 2ND ATTACHMENT + BONUS SUMMARY
+# TAB 2: EXACT TABLES FROM 2ND ATTACHMENT
 # -------------------------------------------------------------
 with tab2:
     st.markdown(f"### 1. EXECUTIVE OVERVIEW ({quarter} {year} vs {quarter} {year-1})")
@@ -427,7 +396,7 @@ with tab2:
             "Metric": "🏆 Total Qualified Bonus",
             f"{quarter} {year}": f"\${total_bonus:,.2f}",
             f"{quarter} {year-1}": "-",
-            "Gain/Loss ($)": f"Sales: ${sales_bonus} | Labor: ${labor_bonus}",
+            "Gain/Loss (\$)": f"Sales: ${sales_bonus} \vert{} Labor:${labor_bonus}",
             "Gain/Loss (%)": ""
         }
     ]
@@ -505,7 +474,6 @@ with tab3:
         df_c = df_curr[show_cols_curr].copy()
         df_c['Date'] = df_c['Date'].dt.strftime('%Y-%m-%d')
         
-        # Append Totals row
         total_dict_curr = {'Date': 'TOTAL'}
         for col in numeric_display:
             if col in df_curr.columns:
@@ -519,7 +487,6 @@ with tab3:
                 total_dict_curr[col] = pd.to_numeric(cleaned_c, errors='coerce').fillna(0).sum()
         df_c = pd.concat([df_c, pd.DataFrame([total_dict_curr])], ignore_index=True)
         
-        # Direct string currency formatting
         for col in numeric_display:
             if col in df_c.columns:
                 df_c[col] = df_c[col].apply(safe_currency)
@@ -532,7 +499,6 @@ with tab3:
         df_p = df_prev[show_cols_prev].copy()
         df_p['Date'] = df_p['Date'].dt.strftime('%Y-%m-%d')
         
-        # Append Totals row
         total_dict_prev = {'Date': 'TOTAL'}
         for col in numeric_display:
             if col in df_prev.columns:
@@ -546,7 +512,6 @@ with tab3:
                 total_dict_prev[col] = pd.to_numeric(cleaned_p, errors='coerce').fillna(0).sum()
         df_p = pd.concat([df_p, pd.DataFrame([total_dict_prev])], ignore_index=True)
         
-        # Direct string currency formatting
         for col in numeric_display:
             if col in df_p.columns:
                 df_p[col] = df_p[col].apply(safe_currency)
