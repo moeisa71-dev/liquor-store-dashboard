@@ -410,7 +410,7 @@ with tab2:
             "Metric": "🏆 Total Qualified Bonus",
             f"{quarter} {year}": f"\${total_bonus:,.2f}",
             f"{quarter} {year-1}": "-",
-            "Gain/Loss (\$)": f"Sales: ${sales_bonus} \vert{} Labor:${labor_bonus}",
+            "Gain/Loss ($)": f"Sales: ${sales_bonus} | Labor: ${labor_bonus}",
             "Gain/Loss (%)": ""
         }
     ]
