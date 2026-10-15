@@ -115,7 +115,7 @@ def parse_kpi_text(raw_text):
     ]
     for col in numeric_cols:
         if col in df.columns:
-            df[col] = df[col].astype(str).str.replace('$', '').str.replace(',', '').str.strip()
+            df[col] = df[col].astype(str).str.replace('$', '', regex=False).str.replace(',', '', regex=False).str.strip()
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
             
     return df, None
@@ -207,8 +207,8 @@ df_prev = df_kpi[(df_kpi['Date'].dt.year == (year - 1)) &
                  (df_kpi['Date'].dt.month >= start_m) & 
                  (df_kpi['Date'].dt.month <= end_m)].tail(13).copy()
 
-# Determine inside sales column (preference: Total Weekly Sales with out Lottery)
-inside_col = 'Total Weekly Sales with out Lottery' if 'Total Weekly Sales with out Lottery' in df_kpi.columns else 'INSIDE SALES'
+# Inside sales column definition
+inside_col = 'Weekly Inside sales w/o lottery' if 'Weekly Inside sales w/o lottery' in df_kpi.columns else 'INSIDE SALES'
 
 gross_inside_curr = df_curr[inside_col].sum()
 shipping_curr = df_curr['Total Shipping Sales'].sum()
@@ -386,8 +386,8 @@ with tab3:
     
     col_a, col_b = st.columns(2)
     numeric_display = [
-        inside_col, 'VAPE SALES', 'Total Shipping Sales', 
-        'Flaviar Sales', 'Shipstation Sales', 'Store Payroll 100hrs $2100'
+        inside_col, 'Total Shipping Sales', 'Total Weekly Sales with out Lottery', 
+        'VAPE SALES', 'Flaviar Sales', 'Shipstation Sales', 'Store Payroll 100hrs $2100'
     ]
     
     with col_a:
