@@ -22,14 +22,23 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-def safe_currency(val):
+# Helper function to convert any dirty string into a safe float
+def clean_numeric_val(val):
     if val is None or pd.isna(val) or val == '':
-        return "\$0.00"
+        return 0.0
+    if isinstance(val, (int, float)):
+        return float(val)
+    s = str(val).strip()
+    # Strip any characters that are not digits, minus sign, or decimal point
+    cleaned = re.sub(r'[^\d.-]', '', s)
     try:
-        val_f = float(str(val).replace('\$', '').replace(',', '').strip())
-        return f"\${val_f:,.2f}"
+        return float(cleaned) if cleaned else 0.0
     except Exception:
-        return str(val)
+        return 0.0
+
+def safe_currency(val):
+    v = clean_numeric_val(val)
+    return f"\${v:,.2f}"
 
 # -------------------------------------------------------------
 # 1. Automatic PDF Parsing Engine (Pulls Sundays from POS PDF)
@@ -83,7 +92,7 @@ def parse_sundays_from_pdf_bytes(pdf_bytes):
     return df
 
 # -------------------------------------------------------------
-# 2. Resilient Google Sheet / CSV Loader (Using gid=0)
+# 2. Resilient Google Sheet / CSV Loader
 # -------------------------------------------------------------
 SHEET_ID = "1NYSifzt4YDDZUkHviAD7bjBSFqbAJCR6vXBoXmHzIv0"
 URL_CANDIDATES = [
@@ -109,6 +118,7 @@ def parse_kpi_text(raw_text):
         return None, "Could not locate 'Date' header row in Google Sheet data."
         
     df = pd.read_csv(io.StringIO(raw_text), skiprows=header_idx)
+    # Strip whitespace from column headers
     df.columns = [str(c).strip() for c in df.columns]
     
     if 'Date' not in df.columns:
@@ -116,19 +126,6 @@ def parse_kpi_text(raw_text):
         
     df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
     df = df.dropna(subset=['Date']).sort_values('Date').reset_index(drop=True)
-    
-    # Clean currency and numbers without regex issues
-    for col in df.columns:
-        if col != 'Date':
-            clean_col_data = (
-                df[col]
-                .astype(str)
-                .str.replace('\$', '', regex=False)
-                .str.replace(',', '', regex=False)
-                .str.strip()
-            )
-            df[col] = pd.to_numeric(clean_col_data, errors='coerce').fillna(0.0)
-            
     return df, None
 
 @st.cache_data(ttl=300)
@@ -166,14 +163,14 @@ if df_kpi is None:
     st.error("Cannot access Google Sheet. Please check link permissions or upload a backup CSV.")
     st.stop()
 
-# Helper function to find and sum columns safely
+# Helper function to find and sum columns safely without case or symbol errors
 def get_col_sum(df, possible_names):
-    norm_targets = [n.lower().replace('\$', '').strip() for n in possible_names]
+    norm_targets = [re.sub(r'[^a-zA-Z0-9]', '', n).lower() for n in possible_names]
     for target in norm_targets:
         for col in df.columns:
-            c_norm = str(col).lower().replace('\$', '').strip()
+            c_norm = re.sub(r'[^a-zA-Z0-9]', '', str(col)).lower()
             if c_norm == target:
-                return float(df[col].sum())
+                return float(df[col].apply(clean_numeric_val).sum())
     return 0.0
 
 # -------------------------------------------------------------
@@ -276,8 +273,8 @@ if parcels_curr == 0:
     parcels_curr = len(df_curr) * 115
 
 # Dynamic Normalization:
-# Q1 and Q2 2026: Vape is deducted because vape launched late May 2025.
-# Q3 2026 and onward: Vape is INCLUDED because both years had full vape operations.
+# Q1 & Q2 2026: Vape is deducted because vape launched late May 2025.
+# Q3 2026 onwards: Vape is INCLUDED because both years had full vape operations.
 if apples_to_apples and year == 2026:
     if quarter in ["Q1", "Q2"]:
         vape_deduction_curr = vape_curr
@@ -302,12 +299,12 @@ else:
 
 pct_inside_change = ((adjusted_inside_curr - adjusted_inside_prev) / adjusted_inside_prev) * 100 if adjusted_inside_prev != 0 else 0.0
 
-# Total Labor Rate (Total Labor / Total Sales including Sundays and Vape)
+# Total Labor Rate (Total Labor / Total Gross Sales)
 labor_rate_curr = (total_labor_curr / total_sales_curr) * 100 if total_sales_curr != 0 else 0.0
 labor_rate_prev = (total_labor_prev / total_sales_prev) * 100 if total_sales_prev != 0 else 0.0
 
 # -------------------------------------------------------------
-# 6. Bonus Calculations Engine (Using Total Labor Rate)
+# 6. Bonus Calculations Engine
 # -------------------------------------------------------------
 def get_sales_bonus(growth):
     if growth >= 25.0:
@@ -507,10 +504,11 @@ with tab3:
         df_c = df_curr[show_cols_curr].copy()
         df_c['Date'] = df_c['Date'].dt.strftime('%Y-%m-%d')
         
+        # Calculate column sums directly using clean_numeric_val
         total_dict_curr = {'Date': 'TOTAL'}
         for col in numeric_display:
             if col in df_curr.columns:
-                total_dict_curr[col] = float(df_curr[col].sum())
+                total_dict_curr[col] = float(df_curr[col].apply(clean_numeric_val).sum())
         df_c = pd.concat([df_c, pd.DataFrame([total_dict_curr])], ignore_index=True)
         
         for col in numeric_display:
@@ -528,7 +526,7 @@ with tab3:
         total_dict_prev = {'Date': 'TOTAL'}
         for col in numeric_display:
             if col in df_prev.columns:
-                total_dict_prev[col] = float(df_prev[col].sum())
+                total_dict_prev[col] = float(df_prev[col].apply(clean_numeric_val).sum())
         df_p = pd.concat([df_p, pd.DataFrame([total_dict_prev])], ignore_index=True)
         
         for col in numeric_display:
