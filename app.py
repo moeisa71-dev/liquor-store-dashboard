@@ -6,6 +6,7 @@ from datetime import datetime
 import io
 import csv
 import requests
+import os
 
 st.set_page_config(page_title="Liquors Ventures Analytics", layout="wide")
 
@@ -23,10 +24,11 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # -------------------------------------------------------------
-# 1. Automatic PDF Parsing Engine (Pulls Sundays from POS PDF)
+# 1. Automatic PDF Parsing Engine (Cached for speed)
 # -------------------------------------------------------------
-def parse_sundays_from_pdf(pdf_file_or_path):
-    reader = pypdf.PdfReader(pdf_file_or_path)
+@st.cache_data(show_spinner=False)
+def parse_sundays_from_pdf_bytes(pdf_bytes):
+    reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
     records = []
     
     for page in reader.pages:
@@ -109,13 +111,13 @@ def parse_kpi_text(raw_text):
     
     numeric_cols = [
         'INSIDE SALES', 'Weekly Inside sales w/o lottery', 'Total Weekly Sales with out Lottery',
-        'Total Shipping Sales', 'Store Payroll 100hrs $2100', 'Shipping Payroll', 'Total Labor Under',
+        'Total Shipping Sales', 'Store Payroll 100hrs \$2100', 'Shipping Payroll', 'Total Labor Under',
         'VAPE SALES', 'INSIDE TRANS COUNT', 'Flaviar Sales', 'Shipstation Sales', 
         'Flaviar Parcels', 'Shipstation parcels', 'Total Parcels'
     ]
     for col in numeric_cols:
         if col in df.columns:
-            df[col] = df[col].astype(str).str.replace('$', '', regex=False).str.replace(',', '', regex=False).str.strip()
+            df[col] = df[col].astype(str).str.replace('\$', '', regex=False).str.replace(',', '', regex=False).str.strip()
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
             
     return df, None
@@ -174,20 +176,46 @@ with c3:
     apples_to_apples = st.toggle("Apples-to-Apples ON", value=True)
 
 # -------------------------------------------------------------
-# 4. Sidebar: POS PDF Upload
+# 4. Permanent Archive Loader + Sidebar Fallback
 # -------------------------------------------------------------
-st.sidebar.header("📁 Quarterly POS PDF Upload")
+st.sidebar.header("📁 Quarterly POS PDF")
 uploaded_pdf = st.sidebar.file_uploader(
-    f"Drop the full {year} {quarter} Daily POS PDF here", 
+    f"Upload custom {year} {quarter} Daily POS PDF", 
     type=["pdf"]
 )
 
 df_sundays = pd.DataFrame()
 
+# Check local repository archive paths
+possible_pdf_paths = [
+    f"pdf_archive/{year}_{quarter}.pdf",
+    f"sundays/{year}_{quarter}.pdf",
+    f"{year}_{quarter}.pdf"
+]
+
+found_archived_file = None
+for p in possible_pdf_paths:
+    if os.path.exists(p):
+        found_archived_file = p
+        break
+
 if uploaded_pdf is not None:
-    with st.spinner("Scanning pages and pulling Sundays..."):
-        df_sundays = parse_sundays_from_pdf(uploaded_pdf)
-        st.sidebar.success(f"Extracted {len(df_sundays)} Sundays successfully!")
+    with st.spinner(f"Parsing uploaded {quarter} PDF..."):
+        df_sundays = parse_sundays_from_pdf_bytes(uploaded_pdf.getvalue())
+        st.sidebar.success(f"Loaded from upload: {len(df_sundays)} Sundays found!")
+elif found_archived_file is not None:
+    with open(found_archived_file, "rb") as f:
+        file_bytes = f.read()
+    df_sundays = parse_sundays_from_pdf_bytes(file_bytes)
+    st.sidebar.info(f"📂 Auto-loaded permanent archive: `{found_archived_file}` ({len(df_sundays)} Sundays)")
+else:
+    # Check if a pre-calculated CSV exists
+    possible_csv_paths = [f"sundays/{year}_{quarter}.csv", f"{year}_{quarter}.csv"]
+    for cp in possible_csv_paths:
+        if os.path.exists(cp):
+            df_sundays = pd.read_csv(cp)
+            st.sidebar.info(f"Loaded cached Sundays from `{cp}`")
+            break
 
 sunday_gross = df_sundays['Gross_Total'].sum() if not df_sundays.empty else 0.0
 sunday_vape = df_sundays['Vape_Sales'].sum() if not df_sundays.empty else 0.0
@@ -213,7 +241,7 @@ inside_col = 'Weekly Inside sales w/o lottery' if 'Weekly Inside sales w/o lotte
 # Current Quarter Figures
 gross_inside_curr = df_curr[inside_col].sum()
 shipping_curr = df_curr['Total Shipping Sales'].sum()
-store_payroll_curr = df_curr['Store Payroll 100hrs $2100'].sum()
+store_payroll_curr = df_curr['Store Payroll 100hrs \$2100'].sum()
 shipping_payroll_curr = df_curr['Shipping Payroll'].sum() if 'Shipping Payroll' in df_curr.columns else 0.0
 total_labor_curr = store_payroll_curr + shipping_payroll_curr
 
@@ -223,7 +251,7 @@ total_sales_curr = gross_inside_curr + shipping_curr
 # Previous Year Figures
 gross_inside_prev = df_prev[inside_col].sum()
 shipping_prev = df_prev['Total Shipping Sales'].sum()
-store_payroll_prev = df_prev['Store Payroll 100hrs $2100'].sum()
+store_payroll_prev = df_prev['Store Payroll 100hrs \$2100'].sum()
 shipping_payroll_prev = df_prev['Shipping Payroll'].sum() if 'Shipping Payroll' in df_prev.columns else 0.0
 total_labor_prev = store_payroll_prev + shipping_payroll_prev
 
@@ -290,25 +318,25 @@ tab1, tab2, tab3 = st.tabs([
 with tab1:
     st.subheader("Apples-to-Apples Normalization Scorecard")
     s1, s2, s3, s4, s5 = st.columns(5)
-    s1.metric("1. Gross Inside Sales", f"${gross_inside_curr:,.2f}", f"Source: {inside_col}")
-    s2.metric("2. Vape Deductions", f"-${vape_curr:,.2f}", "Category Launch: May '25")
-    s3.metric("3. Sunday Deductions", f"-${sunday_net_deduction:,.2f}", f"{len(df_sundays)} Sundays Detected")
-    s4.metric("4. Adjusted Inside Alcohol", f"${adjusted_inside_curr:,.2f}", "Mon-Sat Core Non-Vape")
-    s5.metric("5. Normalized YoY", f"{pct_inside_change:.2f}%", f"vs PY Baseline: ${adjusted_inside_prev:,.2f}")
+    s1.metric("1. Gross Inside Sales", f"\${gross_inside_curr:,.2f}", f"Source: {inside_col}")
+    s2.metric("2. Vape Deductions", f"-\${vape_curr:,.2f}", "Category Launch: May '25")
+    s3.metric("3. Sunday Deductions", f"-\${sunday_net_deduction:,.2f}", f"{len(df_sundays)} Sundays Detected")
+    s4.metric("4. Adjusted Inside Alcohol", f"\${adjusted_inside_curr:,.2f}", "Mon-Sat Core Non-Vape")
+    s5.metric("5. Normalized YoY", f"{pct_inside_change:.2f}%", f"vs PY Baseline: \${adjusted_inside_prev:,.2f}")
 
     st.divider()
 
     # 8 KPI Cards
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("TOTAL GROSS SALES", f"${total_sales_curr:,.2f}", f"{((total_sales_curr - total_sales_prev)/total_sales_prev)*100:+.2f}% YoY" if total_sales_prev else "-")
-    k2.metric("CORE ADJUSTED INSIDE", f"${adjusted_inside_curr:,.2f}", f"{pct_inside_change:+.2f}% Core")
-    k3.metric("SHIPPING SALES (E-COMM)", f"${shipping_curr:,.2f}", f"{((shipping_curr - shipping_prev)/shipping_prev)*100:+.2f}% YoY" if shipping_prev else "-")
-    k4.metric("TOTAL LABOR (STORE + SHIP)", f"${total_labor_curr:,.2f}", f"{((total_labor_curr - total_labor_prev)/total_labor_prev)*100:+.2f}% YoY" if total_labor_prev else "-")
+    k1.metric("TOTAL GROSS SALES", f"\${total_sales_curr:,.2f}", f"{((total_sales_curr - total_sales_prev)/total_sales_prev)*100:+.2f}% YoY" if total_sales_prev else "-")
+    k2.metric("CORE ADJUSTED INSIDE", f"\${adjusted_inside_curr:,.2f}", f"{pct_inside_change:+.2f}% Core")
+    k3.metric("SHIPPING SALES (E-COMM)", f"\${shipping_curr:,.2f}", f"{((shipping_curr - shipping_prev)/shipping_prev)*100:+.2f}% YoY" if shipping_prev else "-")
+    k4.metric("TOTAL LABOR (STORE + SHIP)", f"\${total_labor_curr:,.2f}", f"{((total_labor_curr - total_labor_prev)/total_labor_prev)*100:+.2f}% YoY" if total_labor_prev else "-")
 
     k5, k6, k7, k8 = st.columns(4)
     k5.metric("TOTAL LABOR % OF SALES", f"{labor_rate_curr:.2f}%", f"PY: {labor_rate_prev:.2f}%")
-    k6.metric("STORE TRANSACTIONS", f"{int(df_curr['INSIDE TRANS COUNT'].sum()):,}", f"Avg Ticket: ${gross_inside_curr / max(1, df_curr['INSIDE TRANS COUNT'].sum()):.2f}")
-    k7.metric("SUNDAY REVENUE EXTRACTED", f"${sunday_gross:,.2f}", f"Net Impact: -${sunday_net_deduction:,.2f}")
+    k6.metric("STORE TRANSACTIONS", f"{int(df_curr['INSIDE TRANS COUNT'].sum()):,}", f"Avg Ticket: \${gross_inside_curr / max(1, df_curr['INSIDE TRANS COUNT'].sum()):.2f}")
+    k7.metric("SUNDAY REVENUE EXTRACTED", f"\${sunday_gross:,.2f}", f"Net Impact: -\${sunday_net_deduction:,.2f}")
     k8.metric("TOTAL PARCELS SHIPPED", f"{int(df_curr['Total Parcels'].sum() if 'Total Parcels' in df_curr.columns else len(df_curr)*115):,}")
 
     st.divider()
@@ -316,9 +344,9 @@ with tab1:
     # BONUS QUALIFICATION CARDS
     st.subheader("🎯 Quarterly Bonus Qualification")
     b1, b2, b3 = st.columns(3)
-    b1.metric("Store Sales Bonus", f"${sales_bonus:,.2f}", f"Core Growth: {pct_inside_change:+.2f}%")
-    b2.metric("Labor Rate Bonus", f"${labor_bonus:,.2f}", f"Total Labor Rate: {labor_rate_curr:.2f}%")
-    b3.metric("Total Qualified Bonus", f"${total_bonus:,.2f}", "Combined Payout")
+    b1.metric("Store Sales Bonus", f"\${sales_bonus:,.2f}", f"Core Growth: {pct_inside_change:+.2f}%")
+    b2.metric("Labor Rate Bonus", f"\${labor_bonus:,.2f}", f"Total Labor Rate: {labor_rate_curr:.2f}%")
+    b3.metric("Total Qualified Bonus", f"\${total_bonus:,.2f}", "Combined Payout")
 
 # -------------------------------------------------------------
 # TAB 2: EXACT TABLES FROM 2ND ATTACHMENT + BONUS SUMMARY
@@ -332,44 +360,44 @@ with tab2:
     t1_data = [
         {
             "Metric": f"Total {quarter} Sales",
-            f"{quarter} {year}": f"${total_sales_curr:,.2f}",
-            f"{quarter} {year-1}": f"${total_sales_prev:,.2f}",
-            "Gain/Loss ($)": f"${(total_sales_curr - total_sales_prev):+,.2f}",
+            f"{quarter} {year}": f"\${total_sales_curr:,.2f}",
+            f"{quarter} {year-1}": f"\${total_sales_prev:,.2f}",
+            "Gain/Loss (\$)": f"\${(total_sales_curr - total_sales_prev):+,.2f}",
             "Gain/Loss (%)": f"{((total_sales_curr - total_sales_prev)/total_sales_prev)*100:+.2f}%" if total_sales_prev else "-"
         },
         {
             "Metric": "Net Inside Alcohol Sales",
-            f"{quarter} {year}": f"${adjusted_inside_curr:,.2f}",
-            f"{quarter} {year-1}": f"${adjusted_inside_prev:,.2f}",
-            "Gain/Loss ($)": f"${(adjusted_inside_curr - adjusted_inside_prev):+,.2f}",
+            f"{quarter} {year}": f"\${adjusted_inside_curr:,.2f}",
+            f"{quarter} {year-1}": f"\${adjusted_inside_prev:,.2f}",
+            "Gain/Loss (\$)": f"\${(adjusted_inside_curr - adjusted_inside_prev):+,.2f}",
             "Gain/Loss (%)": f"{pct_inside_change:+.2f}%"
         },
         {
             "Metric": "Shipping Revenue",
-            f"{quarter} {year}": f"${shipping_curr:,.2f}",
-            f"{quarter} {year-1}": f"${shipping_prev:,.2f}",
-            "Gain/Loss ($)": f"${(shipping_curr - shipping_prev):+,.2f}",
+            f"{quarter} {year}": f"\${shipping_curr:,.2f}",
+            f"{quarter} {year-1}": f"\${shipping_prev:,.2f}",
+            "Gain/Loss (\$)": f"\${(shipping_curr - shipping_prev):+,.2f}",
             "Gain/Loss (%)": f"{((shipping_curr - shipping_prev)/shipping_prev)*100:+.2f}%" if shipping_prev else "-"
         },
         {
             "Metric": f"{quarter} Total Labor (Store + Shipping Payroll)",
-            f"{quarter} {year}": f"${total_labor_curr:,.2f}",
-            f"{quarter} {year-1}": f"${total_labor_prev:,.2f}",
-            "Gain/Loss ($)": f"${labor_diff:+,.2f}",
+            f"{quarter} {year}": f"\${total_labor_curr:,.2f}",
+            f"{quarter} {year-1}": f"\${total_labor_prev:,.2f}",
+            "Gain/Loss (\$)": f"\${labor_diff:+,.2f}",
             "Gain/Loss (%)": f"{labor_pct:+.2f}%" if total_labor_prev else "-"
         },
         {
             "Metric": "Labor Rate (Total Labor / Total Sales)",
             f"{quarter} {year}": f"{labor_rate_curr:.2f}%",
             f"{quarter} {year-1}": f"{labor_rate_prev:.2f}%",
-            "Gain/Loss ($)": f"{(labor_rate_curr - labor_rate_prev):+.2f}% pts",
+            "Gain/Loss (\$)": f"{(labor_rate_curr - labor_rate_prev):+.2f}% pts",
             "Gain/Loss (%)": ""
         },
         {
             "Metric": "🏆 Total Qualified Bonus",
-            f"{quarter} {year}": f"${total_bonus:,.2f}",
+            f"{quarter} {year}": f"\${total_bonus:,.2f}",
             f"{quarter} {year-1}": "-",
-            "Gain/Loss ($)": f"Sales: ${sales_bonus} | Labor: ${labor_bonus}",
+            "Gain/Loss (\$)": f"Sales: ${sales_bonus} \vert{} Labor:${labor_bonus}",
             "Gain/Loss (%)": ""
         }
     ]
@@ -383,30 +411,30 @@ with tab2:
     t2_data = [
         {
             "Category": "Inside Sales (Gross)",
-            f"{quarter} {year}": f"${gross_inside_curr:,.2f}",
-            f"{quarter} {year-1}": f"${gross_inside_prev:,.2f}",
-            "Gain/Loss ($)": f"${(gross_inside_curr - gross_inside_prev):+,.2f}",
+            f"{quarter} {year}": f"\${gross_inside_curr:,.2f}",
+            f"{quarter} {year-1}": f"\${gross_inside_prev:,.2f}",
+            "Gain/Loss (\$)": f"\${(gross_inside_curr - gross_inside_prev):+,.2f}",
             "Gain/Loss (%)": f"{((gross_inside_curr - gross_inside_prev)/gross_inside_prev)*100:+.2f}%"
         },
         {
             "Category": "Vape Sales Deductions",
-            f"{quarter} {year}": f"-${vape_curr:,.2f}",
-            f"{quarter} {year-1}": f"-${vape_prev:,.2f}",
-            "Gain/Loss ($)": f"-${vape_diff:,.2f}",
+            f"{quarter} {year}": f"-\${vape_curr:,.2f}",
+            f"{quarter} {year-1}": f"-\${vape_prev:,.2f}",
+            "Gain/Loss (\$)": f"-\${vape_diff:,.2f}",
             "Gain/Loss (%)": f"{vape_pct:+.2f}%"
         },
         {
             "Category": "Sunday Sales Deductions",
-            f"{quarter} {year}": f"-${sunday_net_deduction:,.2f}",
-            f"{quarter} {year-1}": "$0.00",
-            "Gain/Loss ($)": f"-${sunday_net_deduction:,.2f}" if sunday_net_deduction else "$0.00",
+            f"{quarter} {year}": f"-\${sunday_net_deduction:,.2f}",
+            f"{quarter} {year-1}": "\$0.00",
+            "Gain/Loss (\$)": f"-\${sunday_net_deduction:,.2f}" if sunday_net_deduction else "\$0.00",
             "Gain/Loss (%)": "-"
         },
         {
             "Category": "Total Net Inside Alcohol Sales",
-            f"{quarter} {year}": f"${adjusted_inside_curr:,.2f}",
-            f"{quarter} {year-1}": f"${adjusted_inside_prev:,.2f}",
-            "Gain/Loss ($)": f"${(adjusted_inside_curr - adjusted_inside_prev):+,.2f}",
+            f"{quarter} {year}": f"\${adjusted_inside_curr:,.2f}",
+            f"{quarter} {year-1}": f"\${adjusted_inside_prev:,.2f}",
+            "Gain/Loss (\$)": f"\${(adjusted_inside_curr - adjusted_inside_prev):+,.2f}",
             "Gain/Loss (%)": f"{pct_inside_change:+.2f}%"
         }
     ]
@@ -424,12 +452,12 @@ with tab2:
         }])
         df_display_sun = pd.concat([df_display_sun, total_row], ignore_index=True)
         st.dataframe(df_display_sun.style.format({
-            "Gross_Total": "${:,.2f}",
-            "Vape_Sales": "${:,.2f}",
-            "Net_Alcohol": "${:,.2f}"
+            "Gross_Total": "\${:,.2f}",
+            "Vape_Sales": "\${:,.2f}",
+            "Net_Alcohol": "\${:,.2f}"
         }), use_container_width=True, hide_index=True)
     else:
-        st.info("ℹ️ Drop your Daily POS PDF into the left sidebar to automatically generate the 13-week Sunday Deep Dive table!")
+        st.info(f"ℹ️ Drop `{year}_{quarter}.pdf` into your repository or the sidebar to populate the 13-week Sunday table!")
 
 # -------------------------------------------------------------
 # TAB 3: WEEKLY SALES DATA BREAKDOWN WITH TOTALS
@@ -440,7 +468,7 @@ with tab3:
     col_a, col_b = st.columns(2)
     numeric_display = [
         inside_col, 'Total Shipping Sales', 'Total Weekly Sales with out Lottery', 
-        'VAPE SALES', 'Store Payroll 100hrs $2100', 'Shipping Payroll', 'Total Labor Under'
+        'VAPE SALES', 'Store Payroll 100hrs \$2100', 'Shipping Payroll', 'Total Labor Under'
     ]
     
     with col_a:
@@ -456,7 +484,7 @@ with tab3:
                 total_dict_curr[col] = df_curr[col].sum()
         df_c = pd.concat([df_c, pd.DataFrame([total_dict_curr])], ignore_index=True)
         
-        fmt_curr = {col: "${:,.2f}" for col in numeric_display if col in df_c.columns}
+        fmt_curr = {col: "\${:,.2f}" for col in numeric_display if col in df_c.columns}
         st.dataframe(df_c.style.format(fmt_curr), use_container_width=True, hide_index=True)
         
     with col_b:
@@ -472,5 +500,5 @@ with tab3:
                 total_dict_prev[col] = df_prev[col].sum()
         df_p = pd.concat([df_p, pd.DataFrame([total_dict_prev])], ignore_index=True)
         
-        fmt_prev = {col: "${:,.2f}" for col in numeric_display if col in df_p.columns}
+        fmt_prev = {col: "\${:,.2f}" for col in numeric_display if col in df_p.columns}
         st.dataframe(df_p.style.format(fmt_prev), use_container_width=True, hide_index=True)
