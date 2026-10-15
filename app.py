@@ -118,15 +118,6 @@ def parse_kpi_text(raw_text):
         
     df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
     df = df.dropna(subset=['Date']).sort_values('Date').reset_index(drop=True)
-    
-    for col in df.columns:
-        if col != 'Date':
-            try:
-                df[col] = df[col].astype(str).str.replace('\$', '', regex=False).str.replace(',', '', regex=False).str.strip()
-                df[col] = pd.to_numeric(df[col], errors='ignore')
-            except Exception:
-                pass
-            
     return df, None
 
 @st.cache_data(ttl=300)
@@ -164,17 +155,33 @@ if df_kpi is None:
     st.error("Cannot access Google Sheet. Please check link permissions or upload a backup CSV.")
     st.stop()
 
-# Helper function to safely find and sum columns
+# Helper function that strips \$, commas, and whitespace before summing
 def get_col_sum(df, possible_names):
+    matched_col = None
     for name in possible_names:
         if name in df.columns:
-            return pd.to_numeric(df[name], errors='coerce').fillna(0).sum()
-    for col in df.columns:
-        for name in possible_names:
-            c_clean = col.lower().replace('\\', '').replace('\$', '').strip()
-            n_clean = name.lower().replace('\\', '').replace('\$', '').strip()
-            if c_clean == n_clean:
-                return pd.to_numeric(df[col], errors='coerce').fillna(0).sum()
+            matched_col = name
+            break
+    if matched_col is None:
+        for col in df.columns:
+            for name in possible_names:
+                c_clean = col.lower().replace('\\', '').replace('\$', '').strip()
+                n_clean = name.lower().replace('\\', '').replace('\$', '').strip()
+                if c_clean == n_clean:
+                    matched_col = col
+                    break
+            if matched_col:
+                break
+                
+    if matched_col is not None:
+        cleaned_series = (
+            df[matched_col]
+            .astype(str)
+            .str.replace('\$', '', regex=False)
+            .str.replace(',', '', regex=False)
+            .str.strip()
+        )
+        return pd.to_numeric(cleaned_series, errors='coerce').fillna(0).sum()
     return 0.0
 
 # -------------------------------------------------------------
@@ -253,10 +260,8 @@ df_prev = df_kpi[(df_kpi['Date'].dt.year == (year - 1)) &
                  (df_kpi['Date'].dt.month >= start_m) & 
                  (df_kpi['Date'].dt.month <= end_m)].tail(13).copy()
 
-# Inside sales column definition
-inside_col = 'Weekly Inside sales w/o lottery' if 'Weekly Inside sales w/o lottery' in df_kpi.columns else 'INSIDE SALES'
-inside_names = [inside_col, 'Weekly Inside sales w/o lottery', 'INSIDE SALES']
-
+# Robust Column Pulls
+inside_names = ['Weekly Inside sales w/o lottery', 'INSIDE SALES']
 gross_inside_curr = get_col_sum(df_curr, inside_names)
 gross_inside_prev = get_col_sum(df_prev, inside_names)
 
@@ -422,7 +427,7 @@ with tab2:
             "Metric": "🏆 Total Qualified Bonus",
             f"{quarter} {year}": f"\${total_bonus:,.2f}",
             f"{quarter} {year-1}": "-",
-            "Gain/Loss ($)": f"Sales: ${sales_bonus} | Labor: ${labor_bonus}",
+            "Gain/Loss (\$)": f"Sales: ${sales_bonus} \vert{} Labor:${labor_bonus}",
             "Gain/Loss (%)": ""
         }
     ]
@@ -504,7 +509,14 @@ with tab3:
         total_dict_curr = {'Date': 'TOTAL'}
         for col in numeric_display:
             if col in df_curr.columns:
-                total_dict_curr[col] = pd.to_numeric(df_curr[col], errors='coerce').fillna(0).sum()
+                cleaned_c = (
+                    df_curr[col]
+                    .astype(str)
+                    .str.replace('\$', '', regex=False)
+                    .str.replace(',', '', regex=False)
+                    .str.strip()
+                )
+                total_dict_curr[col] = pd.to_numeric(cleaned_c, errors='coerce').fillna(0).sum()
         df_c = pd.concat([df_c, pd.DataFrame([total_dict_curr])], ignore_index=True)
         
         # Direct string currency formatting
@@ -524,7 +536,14 @@ with tab3:
         total_dict_prev = {'Date': 'TOTAL'}
         for col in numeric_display:
             if col in df_prev.columns:
-                total_dict_prev[col] = pd.to_numeric(df_prev[col], errors='coerce').fillna(0).sum()
+                cleaned_p = (
+                    df_prev[col]
+                    .astype(str)
+                    .str.replace('\$', '', regex=False)
+                    .str.replace(',', '', regex=False)
+                    .str.strip()
+                )
+                total_dict_prev[col] = pd.to_numeric(cleaned_p, errors='coerce').fillna(0).sum()
         df_p = pd.concat([df_p, pd.DataFrame([total_dict_prev])], ignore_index=True)
         
         # Direct string currency formatting
