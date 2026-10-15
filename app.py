@@ -23,6 +23,16 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# Helper function to safely format dollar values without crashing
+def safe_currency(val):
+    if val is None or pd.isna(val) or val == '':
+        return "\$0.00"
+    try:
+        val_f = float(str(val).replace('\$', '').replace(',', '').strip())
+        return f"\${val_f:,.2f}"
+    except Exception:
+        return str(val)
+
 # -------------------------------------------------------------
 # 1. Automatic PDF Parsing Engine (Pulls Sundays from POS PDF)
 # -------------------------------------------------------------
@@ -412,7 +422,7 @@ with tab2:
             "Metric": "🏆 Total Qualified Bonus",
             f"{quarter} {year}": f"\${total_bonus:,.2f}",
             f"{quarter} {year-1}": "-",
-            "Gain/Loss ($)": f"Sales: ${sales_bonus} | Labor: ${labor_bonus}",
+            "Gain/Loss (\$)": f"Sales: ${sales_bonus} \vert{} Labor:${labor_bonus}",
             "Gain/Loss (%)": ""
         }
     ]
@@ -466,11 +476,9 @@ with tab2:
             "Net_Alcohol": df_sundays['Net_Alcohol'].sum()
         }])
         df_display_sun = pd.concat([df_display_sun, total_row], ignore_index=True)
-        st.dataframe(df_display_sun.style.format({
-            "Gross_Total": "\${:,.2f}",
-            "Vape_Sales": "\${:,.2f}",
-            "Net_Alcohol": "\${:,.2f}"
-        }), use_container_width=True, hide_index=True)
+        for col in ["Gross_Total", "Vape_Sales", "Net_Alcohol"]:
+            df_display_sun[col] = df_display_sun[col].apply(safe_currency)
+        st.dataframe(df_display_sun, use_container_width=True, hide_index=True)
     else:
         st.info(f"ℹ️ Drop `{year}_{quarter}.pdf` into your repository or the sidebar to populate the 13-week Sunday table!")
 
@@ -482,7 +490,7 @@ with tab3:
     
     col_a, col_b = st.columns(2)
     numeric_display = [
-        inside_col, 'Total Shipping Sales', 'Total Weekly Sales with out Lottery', 
+        'Weekly Inside sales w/o lottery', 'Total Shipping Sales', 'Total Weekly Sales with out Lottery', 
         'VAPE SALES', 'Store Payroll 100hrs \$2100', 'Shipping Payroll', 'Total Labor Under'
     ]
     
@@ -499,8 +507,12 @@ with tab3:
                 total_dict_curr[col] = pd.to_numeric(df_curr[col], errors='coerce').fillna(0).sum()
         df_c = pd.concat([df_c, pd.DataFrame([total_dict_curr])], ignore_index=True)
         
-        fmt_curr = {col: "\${:,.2f}" for col in numeric_display if col in df_c.columns}
-        st.dataframe(df_c.style.format(fmt_curr), use_container_width=True, hide_index=True)
+        # Direct string currency formatting
+        for col in numeric_display:
+            if col in df_c.columns:
+                df_c[col] = df_c[col].apply(safe_currency)
+                
+        st.dataframe(df_c, use_container_width=True, hide_index=True)
         
     with col_b:
         st.markdown(f"#### {quarter} {year-1} Weekly Line Items")
@@ -515,5 +527,9 @@ with tab3:
                 total_dict_prev[col] = pd.to_numeric(df_prev[col], errors='coerce').fillna(0).sum()
         df_p = pd.concat([df_p, pd.DataFrame([total_dict_prev])], ignore_index=True)
         
-        fmt_prev = {col: "\${:,.2f}" for col in numeric_display if col in df_p.columns}
-        st.dataframe(df_p.style.format(fmt_prev), use_container_width=True, hide_index=True)
+        # Direct string currency formatting
+        for col in numeric_display:
+            if col in df_p.columns:
+                df_p[col] = df_p[col].apply(safe_currency)
+                
+        st.dataframe(df_p, use_container_width=True, hide_index=True)
