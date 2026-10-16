@@ -29,7 +29,6 @@ def clean_numeric_val(val):
     if isinstance(val, (int, float)):
         return float(val)
     s = str(val).strip()
-    # Strip any characters that are not digits, minus sign, or decimal point
     cleaned = re.sub(r'[^\d.-]', '', s)
     try:
         return float(cleaned) if cleaned else 0.0
@@ -118,7 +117,6 @@ def parse_kpi_text(raw_text):
         return None, "Could not locate 'Date' header row in Google Sheet data."
         
     df = pd.read_csv(io.StringIO(raw_text), skiprows=header_idx)
-    # Strip whitespace from column headers
     df.columns = [str(c).strip() for c in df.columns]
     
     if 'Date' not in df.columns:
@@ -163,7 +161,7 @@ if df_kpi is None:
     st.error("Cannot access Google Sheet. Please check link permissions or upload a backup CSV.")
     st.stop()
 
-# Helper function to find and sum columns safely without case or symbol errors
+# Helper function to find and sum columns safely
 def get_col_sum(df, possible_names):
     norm_targets = [re.sub(r'[^a-zA-Z0-9]', '', n).lower() for n in possible_names]
     for target in norm_targets:
@@ -334,6 +332,15 @@ sales_bonus = get_sales_bonus(pct_inside_change)
 labor_bonus = get_labor_bonus(labor_rate_curr)
 total_bonus = sales_bonus + labor_bonus
 
+# Zebra striping helper for alternating table colors
+def style_zebra(df):
+    return df.style.set_table_styles([
+        {'selector': 'tbody tr:nth-child(even)', 'props': [('background-color', '#181b24')]},
+        {'selector': 'tbody tr:nth-child(odd)', 'props': [('background-color', '#0e1117')]},
+        {'selector': 'th', 'props': [('background-color', '#262730'), ('color', '#f8fafc'), ('font-weight', 'bold')]},
+        {'selector': 'td', 'props': [('padding', '8px 12px'), ('border', '1px solid #2d3748')]}
+    ])
+
 # -------------------------------------------------------------
 # 7. Render Tabs
 # -------------------------------------------------------------
@@ -378,13 +385,13 @@ with tab1:
     b3.metric("Total Qualified Bonus", f"\${total_bonus:,.2f}", "Combined Payout")
 
 # -------------------------------------------------------------
-# TAB 2: EXACT TABLES FROM 2ND ATTACHMENT
+# TAB 2: EXACT TABLES WITH ZEBRA STRIPING & XLSX DOWNLOAD
 # -------------------------------------------------------------
 with tab2:
     st.markdown(f"### 1. EXECUTIVE OVERVIEW ({quarter} {year} vs {quarter} {year-1})")
     
     labor_diff = total_labor_curr - total_labor_prev
-    labor_pct = (labor_diff / total_labor_prev)*100 if total_labor_prev != 0 else 0.0
+    labor_pct = (labor_diff / total_labor_prev) * 100 if total_labor_prev != 0 else 0.0
 
     t1_data = [
         {
@@ -431,11 +438,11 @@ with tab2:
         }
     ]
     df_t1 = pd.DataFrame(t1_data)
-    st.dataframe(df_t1, width="stretch", hide_index=True)
+    st.dataframe(style_zebra(df_t1), width="stretch", hide_index=True)
 
     st.markdown(f"### 2. INSIDE SALES PERFORMANCE (YOY)")
     vape_diff = vape_deduction_curr - vape_deduction_prev
-    vape_pct = (vape_diff / vape_deduction_prev)*100 if vape_deduction_prev != 0 else 0.0
+    vape_pct = (vape_diff / vape_deduction_prev) * 100 if vape_deduction_prev != 0 else 0.0
 
     t2_data = [
         {
@@ -456,7 +463,7 @@ with tab2:
             "Category": "Sunday Sales Deductions",
             f"{quarter} {year}": f"-\${sunday_deduction_to_use:,.2f}",
             f"{quarter} {year-1}": "\$0.00",
-            "Gain/Loss (\$)": f"-\${sunday_deduction_to_use:,.2f}" if sunday_deduction_to_use else "\$0.00",
+            "Gain/Loss (\$)": f"-\${sunday_deduction_to_use:,.2f}" if sunday_deduction_to_use != 0 else "\$0.00",
             "Gain/Loss (%)": "-"
         },
         {
@@ -468,7 +475,7 @@ with tab2:
         }
     ]
     df_t2 = pd.DataFrame(t2_data)
-    st.dataframe(df_t2, width="stretch", hide_index=True)
+    st.dataframe(style_zebra(df_t2), width="stretch", hide_index=True)
 
     st.markdown(f"### 3. {quarter} {year} SUNDAY SALES DEEP DIVE")
     if not df_sundays.empty:
@@ -482,9 +489,30 @@ with tab2:
         df_display_sun = pd.concat([df_display_sun, total_row], ignore_index=True)
         for col in ["Gross_Total", "Vape_Sales", "Net_Alcohol"]:
             df_display_sun[col] = df_display_sun[col].apply(safe_currency)
-        st.dataframe(df_display_sun, width="stretch", hide_index=True)
+        st.dataframe(style_zebra(df_display_sun), width="stretch", hide_index=True)
     else:
+        df_display_sun = pd.DataFrame()
         st.info(f"Drop `{year}_{quarter}.pdf` into your repository or the sidebar to populate the 13-week Sunday table!")
+
+    # -------------------------------------------------------------
+    # EXCEL (.XLSX) EXPORT BUTTON
+    # -------------------------------------------------------------
+    st.divider()
+    excel_buffer = io.BytesIO()
+    with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+        df_t1.to_excel(writer, sheet_name="Executive Overview", index=False)
+        df_t2.to_excel(writer, sheet_name="Inside Sales YoY", index=False)
+        if not df_display_sun.empty:
+            df_display_sun.to_excel(writer, sheet_name="Sunday Deep Dive", index=False)
+    
+    excel_data = excel_buffer.getvalue()
+
+    st.download_button(
+        label=f"Download {quarter} {year} Executive Tables (.xlsx)",
+        data=excel_data,
+        file_name=f"Liquors_Ventures_{quarter}_{year}_Report.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
 
 # -------------------------------------------------------------
 # TAB 3: WEEKLY SALES DATA BREAKDOWN WITH TOTALS
@@ -504,7 +532,6 @@ with tab3:
         df_c = df_curr[show_cols_curr].copy()
         df_c['Date'] = df_c['Date'].dt.strftime('%Y-%m-%d')
         
-        # Calculate column sums directly using clean_numeric_val
         total_dict_curr = {'Date': 'TOTAL'}
         for col in numeric_display:
             if col in df_curr.columns:
@@ -515,7 +542,7 @@ with tab3:
             if col in df_c.columns:
                 df_c[col] = df_c[col].apply(safe_currency)
                 
-        st.dataframe(df_c, width="stretch", hide_index=True)
+        st.dataframe(style_zebra(df_c), width="stretch", hide_index=True)
         
     with col_b:
         st.markdown(f"#### {quarter} {year-1} Weekly Line Items")
@@ -533,4 +560,4 @@ with tab3:
             if col in df_p.columns:
                 df_p[col] = df_p[col].apply(safe_currency)
                 
-        st.dataframe(df_p, width="stretch", hide_index=True)
+        st.dataframe(style_zebra(df_p), width="stretch", hide_index=True)
