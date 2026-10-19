@@ -29,8 +29,8 @@ st.markdown("""
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     }
     .custom-table th.sec-header {
-        background-color: #1f3845;
-        color: #ffffff;
+        background-color: #1f3845 !important;
+        color: #ffffff !important;
         text-align: left;
         padding: 10px 14px;
         font-size: 15px;
@@ -38,8 +38,8 @@ st.markdown("""
         border: 1px solid #1f3845;
     }
     .custom-table th.col-header {
-        background-color: #5a738e;
-        color: #ffffff;
+        background-color: #5a738e !important;
+        color: #ffffff !important;
         padding: 8px 12px;
         font-size: 13px;
         font-weight: bold;
@@ -50,24 +50,27 @@ st.markdown("""
         font-size: 13px;
         border: 1px solid #334155;
     }
-    .custom-table tr.even-row {
-        background-color: #1e293b;
+    .custom-table tr.even-row td {
+        background-color: #1e293b !important;
+        color: #f8fafc;
     }
-    .custom-table tr.odd-row {
-        background-color: #0f172a;
+    .custom-table tr.odd-row td {
+        background-color: #0f172a !important;
+        color: #f8fafc;
     }
     .pos-val {
-        color: #22c55e;
+        color: #22c55e !important;
         font-weight: bold;
     }
     .neg-val {
-        color: #ef4444;
+        color: #ef4444 !important;
         font-weight: bold;
     }
     .total-row td {
         font-weight: bold;
-        background-color: #1e293b;
+        background-color: #1e293b !important;
         border-top: 2px solid #64748b;
+        color: #ffffff;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -523,118 +526,109 @@ with tab2:
         }
     ]
 
-    # HTML Table Generator for zebra striping without canvas/LaTeX escaping issues
-    def generate_html_table(title_text, headers, rows_data):
-        html = f"""
-        <table class="custom-table">
-            <thead>
-                <tr>
-                    <th colspan="{len(headers)}" class="sec-header">{title_text}</th>
-                </tr>
-                <tr>
-        """
+    def render_clean_html_table(title_text, headers, rows_data):
+        lines = []
+        lines.append('<table class="custom-table">')
+        lines.append('<thead>')
+        lines.append('<tr>')
+        lines.append(f'<th colspan="{len(headers)}" class="sec-header">{title_text}</th>')
+        lines.append('</tr>')
+        lines.append('<tr>')
         for h in headers:
             align = "left" if h in ["Metric", "Category", "Date"] else "right"
-            html += f'<th class="col-header" style="text-align:{align};">{h}</th>'
-        html += """
-                </tr>
-            </thead>
-            <tbody>
-        """
+            lines.append(f'<th class="col-header" style="text-align:{align};">{h}</th>')
+        lines.append('</tr>')
+        lines.append('</thead>')
+        lines.append('<tbody>')
+        
         for idx, row in enumerate(rows_data):
             row_cls = "even-row" if idx % 2 == 0 else "odd-row"
-            html += f'<tr class="{row_cls}">'
+            lines.append(f'<tr class="{row_cls}">')
+            lines.append(f'<td style="text-align:left; font-weight:bold;">{row["name"]}</td>')
             
-            # Column 1: Label
-            html += f'<td style="text-align:left; font-weight:bold;">{row["name"]}</td>'
-            
-            # Column 2: Curr
             if row.get("is_rate"):
                 curr_str = f"{row['curr']:.2f}%"
             elif row.get("is_currency"):
                 curr_str = f"\${row['curr']:,.2f}" if row['curr'] is not None else "-"
             else:
                 curr_str = str(row['curr'])
-            html += f'<td style="text-align:right;">{curr_str}</td>'
+            lines.append(f'<td style="text-align:right;">{curr_str}</td>')
             
-            # Column 3: Prev
             if row.get("is_rate"):
                 prev_str = f"{row['prev']:.2f}%"
             elif row.get("is_currency"):
                 prev_str = f"\${row['prev']:,.2f}" if row['prev'] is not None else "-"
             else:
                 prev_str = str(row['prev']) if row['prev'] is not None else "-"
-            html += f'<td style="text-align:right;">{prev_str}</td>'
+            lines.append(f'<td style="text-align:right;">{prev_str}</td>')
             
-            # Column 4: Diff (\$)
             if row.get("custom_note"):
-                diff_str = row["custom_note"]
-                html += f'<td style="text-align:right;">{diff_str}</td>'
+                lines.append(f'<td style="text-align:right;">{row["custom_note"]}</td>')
             elif row.get("is_rate"):
                 val = row['diff']
                 cls = "pos-val" if val > 0 else ("neg-val" if val < 0 else "")
-                html += f'<td style="text-align:right;" class="{cls}">{val:+.2f}% pts</td>'
+                lines.append(f'<td style="text-align:right;" class="{cls}">{val:+.2f}% pts</td>')
             elif row['diff'] is not None:
                 val = row['diff']
                 cls = "pos-val" if val > 0 else ("neg-val" if val < 0 else "")
-                html += f'<td style="text-align:right;" class="{cls}">\${val:+,.2f}</td>'
+                lines.append(f'<td style="text-align:right;" class="{cls}">\${val:+,.2f}</td>')
             else:
-                html += '<td style="text-align:right;">-</td>'
+                lines.append('<td style="text-align:right;">-</td>')
                 
-            # Column 5: Pct (%)
             if row['pct'] is not None:
                 val = row['pct']
                 cls = "pos-val" if val > 0 else ("neg-val" if val < 0 else "")
-                html += f'<td style="text-align:right;" class="{cls}">{val:+.2f}%</td>'
+                lines.append(f'<td style="text-align:right;" class="{cls}">{val:+.2f}%</td>')
             else:
-                html += '<td style="text-align:right;">-</td>'
+                lines.append('<td style="text-align:right;">-</td>')
                 
-            html += '</tr>'
-        html += "</tbody></table>"
-        return html
+            lines.append('</tr>')
+        lines.append('</tbody>')
+        lines.append('</table>')
+        return "".join(lines)
 
     headers_5col = ["Metric", f"{quarter} {year}", f"{quarter} {year-1}", "Gain/Loss (\$)", "Gain/Loss (%)"]
-    st.markdown(generate_html_table(f"1. EXECUTIVE OVERVIEW ({quarter} {year} vs {quarter} {year-1})", headers_5col, t1_rows), unsafe_allow_html=True)
+    st.html(render_clean_html_table(f"1. EXECUTIVE OVERVIEW ({quarter} {year} vs {quarter} {year-1})", headers_5col, t1_rows))
 
     headers_t2 = ["Category", f"{quarter} {year}", f"{quarter} {year-1}", "Gain/Loss (\$)", "Gain/Loss (%)"]
-    st.markdown(generate_html_table("2. INSIDE SALES PERFORMANCE (YOY)", headers_t2, t2_rows), unsafe_allow_html=True)
+    st.html(render_clean_html_table("2. INSIDE SALES PERFORMANCE (YOY)", headers_t2, t2_rows))
 
     # 3. Sunday Sales Deep Dive Table
     if not df_sundays.empty:
         sun_headers = ["Date", "Gross Sunday Total", "Vape Portion", "Net Sunday Impact"]
-        sun_html = f"""
-        <table class="custom-table">
-            <thead>
-                <tr>
-                    <th colspan="4" class="sec-header">3. {quarter} {year} SUNDAY SALES DEEP DIVE</th>
-                </tr>
-                <tr>
-        """
+        slines = []
+        slines.append('<table class="custom-table">')
+        slines.append('<thead>')
+        slines.append('<tr>')
+        slines.append(f'<th colspan="4" class="sec-header">3. {quarter} {year} SUNDAY SALES DEEP DIVE</th>')
+        slines.append('</tr>')
+        slines.append('<tr>')
         for h in sun_headers:
             align = "left" if h == "Date" else "right"
-            sun_html += f'<th class="col-header" style="text-align:{align};">{h}</th>'
-        sun_html += "</tr></thead><tbody>"
+            slines.append(f'<th class="col-header" style="text-align:{align};">{h}</th>')
+        slines.append('</tr>')
+        slines.append('</thead>')
+        slines.append('<tbody>')
         
         for idx, r in df_sundays.iterrows():
             row_cls = "even-row" if idx % 2 == 0 else "odd-row"
-            sun_html += f"""
-            <tr class="{row_cls}">
-                <td style="text-align:left;">{r['Date']}</td>
-                <td style="text-align:right;">\${r['Gross_Total']:,.2f}</td>
-                <td style="text-align:right;">\${r['Vape_Sales']:,.2f}</td>
-                <td style="text-align:right;">\${r['Net_Alcohol']:,.2f}</td>
-            </tr>
-            """
-        sun_html += f"""
-            <tr class="total-row">
-                <td style="text-align:left;">TOTAL</td>
-                <td style="text-align:right;">\${sunday_gross:,.2f}</td>
-                <td style="text-align:right;">\${sunday_vape:,.2f}</td>
-                <td style="text-align:right;">\${sunday_net_deduction:,.2f}</td>
-            </tr>
-        </tbody></table>
-        """
-        st.markdown(sun_html, unsafe_allow_html=True)
+            slines.append(f'<tr class="{row_cls}">')
+            slines.append(f'<td style="text-align:left;">{r["Date"]}</td>')
+            slines.append(f'<td style="text-align:right;">\${r["Gross_Total"]:,.2f}</td>')
+            slines.append(f'<td style="text-align:right;">\${r["Vape_Sales"]:,.2f}</td>')
+            slines.append(f'<td style="text-align:right;">\${r["Net_Alcohol"]:,.2f}</td>')
+            slines.append('</tr>')
+            
+        slines.append('<tr class="total-row">')
+        slines.append('<td style="text-align:left;">TOTAL</td>')
+        slines.append(f'<td style="text-align:right;">\${sunday_gross:,.2f}</td>')
+        slines.append(f'<td style="text-align:right;">\${sunday_vape:,.2f}</td>')
+        slines.append(f'<td style="text-align:right;">\${sunday_net_deduction:,.2f}</td>')
+        slines.append('</tr>')
+        slines.append('</tbody>')
+        slines.append('</table>')
+        
+        st.html("".join(slines))
     else:
         st.info(f"Drop `{year}_{quarter}.pdf` into your repository or the sidebar to populate the 13-week Sunday table!")
 
@@ -649,7 +643,7 @@ with tab2:
         ws.title = f"{quarter} {year} Executive Report"
         ws.views.sheetView[0].showGridLines = True
 
-        title_fill = PatternFill(start_color="1F3845", end_color="1F3845", fill_type="solid")
+        title_fill = PatternFill(start_color="1E3A47", end_color="1E3A47", fill_type="solid")
         title_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
 
         header_fill = PatternFill(start_color="5A738E", end_color="5A738E", fill_type="solid")
